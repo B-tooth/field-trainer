@@ -1,0 +1,10 @@
+{
+  "name": "Species Flashcards",
+  "short_name": "Flashcards",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef3f5",
+  "theme_color": "#16324f",
+  "description": "A personal species identification flashcard trainer."
+}

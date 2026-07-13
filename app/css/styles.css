@@ -36,3 +36,5 @@ p { line-height:1.5; }
 .stats strong { margin-top:5px; font-size:1.25rem; color:#16324f; }
 .hidden { display:none !important; }
 @media (max-width:600px){ .shell{padding-top:18px}.study-topline{align-items:start}.flashcard img{max-height:58vh}.controls button{padding:15px 12px}.text-button{max-width:120px;text-align:right}.stats{padding:13px 8px} }
+.keyboard-help { margin:-4px 0 14px; text-align:center; color:#687985; font-size:.82rem; }
+@media (max-width:600px){ .keyboard-help{display:none} }

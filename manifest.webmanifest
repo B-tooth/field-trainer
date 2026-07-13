@@ -1,9 +1,0 @@
-{
-  "name":"Species Flashcards",
-  "short_name":"Flashcards",
-  "start_url":"./",
-  "display":"standalone",
-  "background_color":"#eef3f5",
-  "theme_color":"#16324f",
-  "icons":[]
-}
