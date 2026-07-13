@@ -1,0 +1,9 @@
+{
+  "decks": [
+    {
+      "id": "fish_morphology",
+      "name": "Fish Morphology",
+      "path": "decks/fish_morphology/deck.json"
+    }
+  ]
+}

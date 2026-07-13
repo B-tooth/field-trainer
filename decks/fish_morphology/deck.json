@@ -1,0 +1,14 @@
+{
+  "id": "fish_morphology",
+  "name": "Fish Morphology",
+  "cards": [
+    {"id":"slide-1","image":"slide-1.png","answer":"Gill cover or operculum"},
+    {"id":"slide-2","image":"slide-2.png","answer":"Dorsal fin"},
+    {"id":"slide-3","image":"slide-3.png","answer":"Adipose fin"},
+    {"id":"slide-4","image":"slide-4.png","answer":"Caudal or tail fin"},
+    {"id":"slide-5","image":"slide-5.png","answer":"Pectoral fin"},
+    {"id":"slide-6","image":"slide-6.png","answer":"Lateral line"},
+    {"id":"slide-7","image":"slide-7.png","answer":"Pelvic fin"},
+    {"id":"slide-8","image":"slide-8.png","answer":"Anal fin"}
+  ]
+}
