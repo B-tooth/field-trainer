@@ -3,71 +3,73 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#16324f">
-  <title>Species Flashcards</title>
+  <meta name="theme-color" content="#173f3a">
+  <title>Field Trainer</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <main class="shell">
-    <header>
-      <div>
-        <p class="eyebrow">PERSONAL IDENTIFICATION TRAINER</p>
-        <h1>Species Flashcards</h1>
+    <header class="app-header">
+      <button id="backButton" class="icon-button hidden" aria-label="Go back">←</button>
+      <div class="brand">
+        <p class="eyebrow">PERSONAL FIELD IDENTIFICATION</p>
+        <h1>Field Trainer</h1>
       </div>
       <button id="homeButton" class="secondary hidden">Decks</button>
     </header>
 
     <section id="homeView">
-      <div class="intro card">
-        <h2>Choose a deck</h2>
-        <p>Open a deck in Read mode to browse the answers, or Test mode to practise.</p>
+      <div class="hero card">
+        <div>
+          <p class="eyebrow">YOUR LIBRARY</p>
+          <h2>Choose how you want to learn</h2>
+          <p>Read a deck as a reference guide, or test yourself and strengthen difficult cards.</p>
+        </div>
       </div>
       <div id="deckList" class="deck-list"></div>
-    </section>
-
-    <section id="modeView" class="hidden">
-      <div class="intro card mode-intro">
-        <p class="eyebrow">CHOOSE A MODE</p>
-        <h2 id="modeDeckName"></h2>
-        <p id="modeDeckDetails"></p>
-      </div>
-      <div class="mode-grid">
-        <button id="readModeButton" class="mode-button read-mode">
-          <span class="mode-icon" aria-hidden="true">📖</span>
-          <strong>Read</strong>
-          <span>View every slide in order with its answer visible.</span>
-        </button>
-        <button id="testModeButton" class="mode-button test-mode">
-          <span class="mode-icon" aria-hidden="true">✓</span>
-          <strong>Test</strong>
-          <span>Reveal each answer, then mark yourself right or wrong.</span>
-        </button>
-      </div>
     </section>
 
     <section id="readView" class="hidden">
       <div class="view-heading">
         <div>
           <p id="readDeckName" class="eyebrow"></p>
-          <h2>Read mode</h2>
-          <p id="readProgress" class="view-description"></p>
+          <h2>Read</h2>
         </div>
-        <button id="switchToTestButton" class="secondary">Test this deck</button>
+        <button id="switchToTestButton" class="secondary">Test deck</button>
       </div>
-      <div id="readCardList" class="read-card-list"></div>
+
+      <div class="progress-row">
+        <span id="readProgress"></span>
+        <div class="progress-track" aria-hidden="true"><div id="readProgressBar" class="progress-fill"></div></div>
+      </div>
+
+      <article class="flashcard read-flashcard">
+        <img id="readCardImage" alt="Reference slide">
+        <div class="answer-panel">
+          <span>Answer</span>
+          <h2 id="readAnswerText"></h2>
+        </div>
+      </article>
+
+      <div class="pager">
+        <button id="previousReadButton" class="secondary">← Previous</button>
+        <button id="nextReadButton" class="primary">Next →</button>
+      </div>
     </section>
 
     <section id="studyView" class="hidden">
-      <div class="study-topline">
+      <div class="view-heading study-heading">
         <div>
           <p id="deckName" class="eyebrow"></p>
-          <strong id="progressText"></strong>
+          <h2>Test</h2>
         </div>
-        <div class="study-actions">
-          <button id="switchToReadButton" class="text-button">Read deck</button>
-          <button id="resetButton" class="text-button">Reset progress</button>
-        </div>
+        <button id="switchToReadButton" class="secondary">Read deck</button>
+      </div>
+
+      <div class="progress-row">
+        <span id="progressText"></span>
+        <div class="progress-track" aria-hidden="true"><div id="testProgressBar" class="progress-fill"></div></div>
       </div>
 
       <article class="flashcard">
@@ -86,13 +88,15 @@
         <button id="rightButton" class="right">Right</button>
       </div>
 
-      <p class="keyboard-help">Keyboard: Space = reveal · ← = wrong · → = right</p>
+      <p class="keyboard-help">Space = reveal · ← = wrong · → = right</p>
 
       <div class="stats card">
         <div><span>Right</span><strong id="rightCount">0</strong></div>
         <div><span>Wrong</span><strong id="wrongCount">0</strong></div>
         <div><span>Accuracy</span><strong id="accuracy">—</strong></div>
       </div>
+
+      <button id="resetButton" class="reset-link">Reset this deck's progress</button>
     </section>
   </main>
   <script src="js/app.js"></script>

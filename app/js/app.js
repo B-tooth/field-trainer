@@ -6,11 +6,13 @@ const state = {
   current: null,
   shown: 0,
   answerVisible: false,
-  mode: null
+  mode: null,
+  readIndex: 0,
+  sessionSeen: new Set()
 };
 const $ = (id) => document.getElementById(id);
 const DECK_INDEX = '../decks/index.json';
-const viewIds = ['homeView', 'modeView', 'readView', 'studyView'];
+const viewIds = ['homeView', 'readView', 'studyView'];
 
 async function fetchJson(path) {
   const response = await fetch(path, { cache: 'no-store' });
@@ -20,7 +22,9 @@ async function fetchJson(path) {
 
 function showView(viewId) {
   for (const id of viewIds) $(id).classList.toggle('hidden', id !== viewId);
-  $('homeButton').classList.toggle('hidden', viewId === 'homeView');
+  const onHome = viewId === 'homeView';
+  $('homeButton').classList.toggle('hidden', onHome);
+  $('backButton').classList.toggle('hidden', onHome);
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
@@ -36,11 +40,23 @@ async function loadDeckIndex() {
     const totalAnswers = progress.right + progress.wrong;
     const accuracy = totalAnswers ? `${Math.round((progress.right / totalAnswers) * 100)}% accuracy` : 'Not started';
 
-    const button = document.createElement('button');
-    button.className = 'deck-button';
-    button.innerHTML = `<strong>${escapeHtml(deck.name)}</strong><span>${deck.cards.length} cards · ${accuracy}</span>`;
-    button.addEventListener('click', () => chooseMode(deck, deckFolder));
-    list.appendChild(button);
+    const article = document.createElement('article');
+    article.className = 'deck-card card';
+    article.innerHTML = `
+      <div class="deck-card-top">
+        <div>
+          <h3>${escapeHtml(deck.name)}</h3>
+          <p class="deck-meta">${deck.cards.length} cards · ${accuracy}</p>
+        </div>
+        <span class="deck-icon" aria-hidden="true">◉</span>
+      </div>
+      <div class="deck-actions">
+        <button class="secondary read-deck-button">Read</button>
+        <button class="primary test-deck-button">Test</button>
+      </div>`;
+    article.querySelector('.read-deck-button').addEventListener('click', () => startReadMode(deck, deckFolder));
+    article.querySelector('.test-deck-button').addEventListener('click', () => startTestMode(deck, deckFolder));
+    list.appendChild(article);
   }
 }
 
@@ -59,54 +75,48 @@ function setDeck(deck, path) {
   state.current = null;
   state.shown = 0;
   state.answerVisible = false;
+  state.readIndex = 0;
+  state.sessionSeen = new Set();
 }
 
-function chooseMode(deck, path) {
-  setDeck(deck, path);
-  state.mode = null;
-  $('modeDeckName').textContent = deck.name;
-  $('modeDeckDetails').textContent = `${deck.cards.length} cards`;
-  showView('modeView');
+function ensureDeck(deck, path) {
+  if (deck && path) setDeck(deck, path);
 }
 
-function startReadMode() {
+function startReadMode(deck, path) {
+  ensureDeck(deck, path);
   state.mode = 'read';
+  state.readIndex = 0;
   $('readDeckName').textContent = state.deck.name;
-  $('readProgress').textContent = `${state.deck.cards.length} slides with answers`;
-  renderReadCards();
+  renderReadCard();
   showView('readView');
 }
 
-function renderReadCards() {
-  const list = $('readCardList');
-  list.replaceChildren();
-
-  state.deck.cards.forEach((card, index) => {
-    const article = document.createElement('article');
-    article.className = 'read-card card';
-
-    const counter = document.createElement('p');
-    counter.className = 'read-card-number';
-    counter.textContent = `${index + 1} of ${state.deck.cards.length}`;
-
-    const image = document.createElement('img');
-    image.src = `${state.deckPath}${card.image}`;
-    image.alt = `${card.answer} slide`;
-    image.loading = index < 2 ? 'eager' : 'lazy';
-
-    const answer = document.createElement('div');
-    answer.className = 'answer-panel read-answer';
-    answer.innerHTML = `<span>Answer</span><h2>${escapeHtml(card.answer)}</h2>`;
-
-    article.append(counter, image, answer);
-    list.appendChild(article);
-  });
+function renderReadCard() {
+  const card = state.deck.cards[state.readIndex];
+  const currentNumber = state.readIndex + 1;
+  $('readCardImage').src = `${state.deckPath}${card.image}`;
+  $('readCardImage').alt = `${card.answer} slide`;
+  $('readAnswerText').textContent = card.answer;
+  $('readProgress').textContent = `${currentNumber} of ${state.deck.cards.length}`;
+  $('readProgressBar').style.width = `${(currentNumber / state.deck.cards.length) * 100}%`;
+  $('previousReadButton').disabled = state.readIndex === 0;
+  $('nextReadButton').textContent = state.readIndex === state.deck.cards.length - 1 ? 'Back to start ↺' : 'Next →';
 }
 
-function startTestMode() {
+function moveReadCard(direction) {
+  if (direction < 0 && state.readIndex > 0) state.readIndex -= 1;
+  if (direction > 0) state.readIndex = state.readIndex === state.deck.cards.length - 1 ? 0 : state.readIndex + 1;
+  renderReadCard();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function startTestMode(deck, path) {
+  ensureDeck(deck, path);
   state.mode = 'test';
   state.current = null;
   state.shown = 0;
+  state.sessionSeen = new Set();
   $('deckName').textContent = state.deck.name;
   updateStats();
   chooseCard();
@@ -133,13 +143,21 @@ function chooseCard() {
 
   state.current = chosen;
   state.shown += 1;
+  state.sessionSeen.add(chosen.id);
   state.answerVisible = false;
   $('cardImage').src = `${state.deckPath}${chosen.image}`;
   $('answerText').textContent = chosen.answer;
   $('answerPanel').classList.add('hidden');
   $('ratingControls').classList.add('hidden');
   $('revealControls').classList.remove('hidden');
-  $('progressText').textContent = `Card ${state.shown}`;
+  updateSessionProgress();
+}
+
+function updateSessionProgress() {
+  const seen = state.sessionSeen.size;
+  const total = state.deck.cards.length;
+  $('progressText').textContent = `${seen} of ${total} cards seen · ${state.shown} shown`;
+  $('testProgressBar').style.width = `${Math.min(100, (seen / total) * 100)}%`;
 }
 
 function reveal() {
@@ -178,6 +196,8 @@ function resetProgress() {
   if (confirm(`Reset all saved results for ${state.deck.name}?`)) {
     localStorage.removeItem(progressKey(state.deck.id));
     updateStats();
+    state.sessionSeen = new Set();
+    state.shown = 0;
     chooseCard();
   }
 }
@@ -190,24 +210,34 @@ function goHome() {
   loadDeckIndex().catch(showLoadError);
 }
 
+function goBack() {
+  if (state.mode === 'read' || state.mode === 'test') goHome();
+}
+
 function showLoadError(error) {
-  $('deckList').innerHTML = `<div class="card intro"><strong>App could not load.</strong><p>${escapeHtml(error.message)} Run it through the included start-app.bat file.</p></div>`;
+  $('deckList').innerHTML = `<div class="card hero"><strong>App could not load.</strong><p>${escapeHtml(error.message)} Run it through the included start-app.bat file.</p></div>`;
 }
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 }
 
-$('readModeButton').addEventListener('click', startReadMode);
-$('testModeButton').addEventListener('click', startTestMode);
-$('switchToReadButton').addEventListener('click', startReadMode);
-$('switchToTestButton').addEventListener('click', startTestMode);
+$('switchToReadButton').addEventListener('click', () => startReadMode());
+$('switchToTestButton').addEventListener('click', () => startTestMode());
+$('previousReadButton').addEventListener('click', () => moveReadCard(-1));
+$('nextReadButton').addEventListener('click', () => moveReadCard(1));
 $('revealButton').addEventListener('click', reveal);
 $('rightButton').addEventListener('click', () => rate(true));
 $('wrongButton').addEventListener('click', () => rate(false));
 $('resetButton').addEventListener('click', resetProgress);
 $('homeButton').addEventListener('click', goHome);
+$('backButton').addEventListener('click', goBack);
 document.addEventListener('keydown', (event) => {
+  if (state.mode === 'read') {
+    if (event.code === 'ArrowLeft') moveReadCard(-1);
+    if (event.code === 'ArrowRight') moveReadCard(1);
+    return;
+  }
   if (state.mode !== 'test') return;
   if (event.code === 'Space' && !state.answerVisible) { event.preventDefault(); reveal(); }
   if (event.code === 'ArrowLeft' && state.answerVisible) rate(false);

@@ -1,10 +1,10 @@
 {
-  "name": "Species Flashcards",
-  "short_name": "Flashcards",
+  "name": "Field Trainer",
+  "short_name": "Field Trainer",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#eef3f5",
-  "theme_color": "#16324f",
-  "description": "A personal species identification flashcard trainer."
+  "background_color": "#edf3f0",
+  "theme_color": "#173f3a",
+  "description": "A personal field identification and species learning trainer."
 }
