@@ -21,9 +21,41 @@
     <section id="homeView">
       <div class="intro card">
         <h2>Choose a deck</h2>
-        <p>Study the slide, reveal its title, then mark your answer right or wrong.</p>
+        <p>Open a deck in Read mode to browse the answers, or Test mode to practise.</p>
       </div>
       <div id="deckList" class="deck-list"></div>
+    </section>
+
+    <section id="modeView" class="hidden">
+      <div class="intro card mode-intro">
+        <p class="eyebrow">CHOOSE A MODE</p>
+        <h2 id="modeDeckName"></h2>
+        <p id="modeDeckDetails"></p>
+      </div>
+      <div class="mode-grid">
+        <button id="readModeButton" class="mode-button read-mode">
+          <span class="mode-icon" aria-hidden="true">📖</span>
+          <strong>Read</strong>
+          <span>View every slide in order with its answer visible.</span>
+        </button>
+        <button id="testModeButton" class="mode-button test-mode">
+          <span class="mode-icon" aria-hidden="true">✓</span>
+          <strong>Test</strong>
+          <span>Reveal each answer, then mark yourself right or wrong.</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="readView" class="hidden">
+      <div class="view-heading">
+        <div>
+          <p id="readDeckName" class="eyebrow"></p>
+          <h2>Read mode</h2>
+          <p id="readProgress" class="view-description"></p>
+        </div>
+        <button id="switchToTestButton" class="secondary">Test this deck</button>
+      </div>
+      <div id="readCardList" class="read-card-list"></div>
     </section>
 
     <section id="studyView" class="hidden">
@@ -32,7 +64,10 @@
           <p id="deckName" class="eyebrow"></p>
           <strong id="progressText"></strong>
         </div>
-        <button id="resetButton" class="text-button">Reset deck progress</button>
+        <div class="study-actions">
+          <button id="switchToReadButton" class="text-button">Read deck</button>
+          <button id="resetButton" class="text-button">Reset progress</button>
+        </div>
       </div>
 
       <article class="flashcard">

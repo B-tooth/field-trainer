@@ -92,3 +92,12 @@ git push
 ```
 
 Do not commit temporary PowerPoint lock files beginning with `~$`; these are excluded by `.gitignore`.
+
+## Study modes
+
+After choosing a deck, select one of two modes:
+
+- **Read** — displays every slide in order with the answer visible underneath. Scroll through the complete deck as a reference.
+- **Test** — uses the existing quiz, right/wrong controls, saved results and extra weighting for difficult cards.
+
+You can switch between Read and Test from within the selected deck. Read mode does not change your test statistics.

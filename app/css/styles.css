@@ -38,3 +38,31 @@ p { line-height:1.5; }
 @media (max-width:600px){ .shell{padding-top:18px}.study-topline{align-items:start}.flashcard img{max-height:58vh}.controls button{padding:15px 12px}.text-button{max-width:120px;text-align:right}.stats{padding:13px 8px} }
 .keyboard-help { margin:-4px 0 14px; text-align:center; color:#687985; font-size:.82rem; }
 @media (max-width:600px){ .keyboard-help{display:none} }
+
+/* v0.3: Read and Test modes */
+.mode-intro { margin-bottom:16px; }
+.mode-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.mode-button { min-height:210px; padding:26px; border-radius:20px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end; box-shadow:0 14px 32px rgba(22,50,79,.14); transition:transform .15s ease,box-shadow .15s ease; }
+.mode-button:hover { transform:translateY(-3px); box-shadow:0 18px 38px rgba(22,50,79,.2); }
+.mode-button strong { display:block; font-size:1.45rem; margin:9px 0 6px; }
+.mode-button span:last-child { line-height:1.45; opacity:.84; }
+.mode-icon { font-size:2rem; }
+.read-mode { background:#fff; color:#16324f; }
+.test-mode { background:#16324f; color:#fff; }
+.view-heading { display:flex; justify-content:space-between; align-items:flex-end; gap:18px; margin-bottom:18px; }
+.view-heading h2 { margin-bottom:3px; color:#16324f; }
+.view-description { margin:0; color:#63747e; }
+.read-card-list { display:grid; gap:20px; }
+.read-card { overflow:hidden; position:relative; }
+.read-card img { display:block; width:100%; max-height:72vh; object-fit:contain; background:#fff; }
+.read-card-number { position:absolute; top:12px; right:12px; z-index:1; margin:0; padding:7px 10px; border-radius:999px; background:rgba(22,50,79,.9); color:#fff; font-size:.75rem; font-weight:800; }
+.read-answer { background:#fff; }
+.study-actions { display:flex; align-items:center; gap:12px; }
+@media (max-width:600px) {
+  .mode-grid { grid-template-columns:1fr; }
+  .mode-button { min-height:170px; }
+  .view-heading { align-items:flex-start; }
+  .view-heading .secondary { white-space:nowrap; }
+  .study-actions { flex-direction:column; align-items:flex-end; gap:4px; }
+  .read-card img { max-height:58vh; }
+}

@@ -1,13 +1,27 @@
 'use strict';
 
-const state = { deck: null, deckPath: null, current: null, shown: 0, answerVisible: false };
+const state = {
+  deck: null,
+  deckPath: null,
+  current: null,
+  shown: 0,
+  answerVisible: false,
+  mode: null
+};
 const $ = (id) => document.getElementById(id);
 const DECK_INDEX = '../decks/index.json';
+const viewIds = ['homeView', 'modeView', 'readView', 'studyView'];
 
 async function fetchJson(path) {
   const response = await fetch(path, { cache: 'no-store' });
   if (!response.ok) throw new Error(`Could not load ${path}.`);
   return response.json();
+}
+
+function showView(viewId) {
+  for (const id of viewIds) $(id).classList.toggle('hidden', id !== viewId);
+  $('homeButton').classList.toggle('hidden', viewId === 'homeView');
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 async function loadDeckIndex() {
@@ -25,7 +39,7 @@ async function loadDeckIndex() {
     const button = document.createElement('button');
     button.className = 'deck-button';
     button.innerHTML = `<strong>${escapeHtml(deck.name)}</strong><span>${deck.cards.length} cards · ${accuracy}</span>`;
-    button.addEventListener('click', () => startDeck(deck, deckFolder));
+    button.addEventListener('click', () => chooseMode(deck, deckFolder));
     list.appendChild(button);
   }
 }
@@ -39,17 +53,64 @@ function getProgressFor(deckId) {
 function getProgress() { return getProgressFor(state.deck.id); }
 function saveProgress(progress) { localStorage.setItem(progressKey(state.deck.id), JSON.stringify(progress)); }
 
-function startDeck(deck, path) {
+function setDeck(deck, path) {
   state.deck = deck;
   state.deckPath = path;
   state.current = null;
   state.shown = 0;
-  $('homeView').classList.add('hidden');
-  $('studyView').classList.remove('hidden');
-  $('homeButton').classList.remove('hidden');
-  $('deckName').textContent = deck.name;
+  state.answerVisible = false;
+}
+
+function chooseMode(deck, path) {
+  setDeck(deck, path);
+  state.mode = null;
+  $('modeDeckName').textContent = deck.name;
+  $('modeDeckDetails').textContent = `${deck.cards.length} cards`;
+  showView('modeView');
+}
+
+function startReadMode() {
+  state.mode = 'read';
+  $('readDeckName').textContent = state.deck.name;
+  $('readProgress').textContent = `${state.deck.cards.length} slides with answers`;
+  renderReadCards();
+  showView('readView');
+}
+
+function renderReadCards() {
+  const list = $('readCardList');
+  list.replaceChildren();
+
+  state.deck.cards.forEach((card, index) => {
+    const article = document.createElement('article');
+    article.className = 'read-card card';
+
+    const counter = document.createElement('p');
+    counter.className = 'read-card-number';
+    counter.textContent = `${index + 1} of ${state.deck.cards.length}`;
+
+    const image = document.createElement('img');
+    image.src = `${state.deckPath}${card.image}`;
+    image.alt = `${card.answer} slide`;
+    image.loading = index < 2 ? 'eager' : 'lazy';
+
+    const answer = document.createElement('div');
+    answer.className = 'answer-panel read-answer';
+    answer.innerHTML = `<span>Answer</span><h2>${escapeHtml(card.answer)}</h2>`;
+
+    article.append(counter, image, answer);
+    list.appendChild(article);
+  });
+}
+
+function startTestMode() {
+  state.mode = 'test';
+  state.current = null;
+  state.shown = 0;
+  $('deckName').textContent = state.deck.name;
   updateStats();
   chooseCard();
+  showView('studyView');
 }
 
 function cardWeight(card, progress) {
@@ -82,6 +143,7 @@ function chooseCard() {
 }
 
 function reveal() {
+  if (state.mode !== 'test') return;
   state.answerVisible = true;
   $('answerPanel').classList.remove('hidden');
   $('revealControls').classList.add('hidden');
@@ -89,7 +151,7 @@ function reveal() {
 }
 
 function rate(isRight) {
-  if (!state.answerVisible) return;
+  if (state.mode !== 'test' || !state.answerVisible) return;
   const progress = getProgress();
   progress.cards[state.current.id] ||= { right: 0, wrong: 0 };
   if (isRight) {
@@ -122,9 +184,9 @@ function resetProgress() {
 
 function goHome() {
   state.deck = null;
-  $('studyView').classList.add('hidden');
-  $('homeView').classList.remove('hidden');
-  $('homeButton').classList.add('hidden');
+  state.deckPath = null;
+  state.mode = null;
+  showView('homeView');
   loadDeckIndex().catch(showLoadError);
 }
 
@@ -136,13 +198,17 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 }
 
+$('readModeButton').addEventListener('click', startReadMode);
+$('testModeButton').addEventListener('click', startTestMode);
+$('switchToReadButton').addEventListener('click', startReadMode);
+$('switchToTestButton').addEventListener('click', startTestMode);
 $('revealButton').addEventListener('click', reveal);
 $('rightButton').addEventListener('click', () => rate(true));
 $('wrongButton').addEventListener('click', () => rate(false));
 $('resetButton').addEventListener('click', resetProgress);
 $('homeButton').addEventListener('click', goHome);
 document.addEventListener('keydown', (event) => {
-  if (!state.deck) return;
+  if (state.mode !== 'test') return;
   if (event.code === 'Space' && !state.answerVisible) { event.preventDefault(); reveal(); }
   if (event.code === 'ArrowLeft' && state.answerVisible) rate(false);
   if (event.code === 'ArrowRight' && state.answerVisible) rate(true);
