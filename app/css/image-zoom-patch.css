@@ -1,0 +1,83 @@
+/* Field Trainer v0.6 — image zoom */
+
+.flashcard img {
+  cursor: zoom-in;
+}
+
+body.zoom-open {
+  overflow: hidden;
+}
+
+.image-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(8, 20, 18, 0.96);
+}
+
+.image-zoom.hidden {
+  display: none;
+}
+
+.zoom-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.zoom-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.zoom-stage.dragging {
+  cursor: grabbing;
+}
+
+.zoom-stage img {
+  max-width: 92%;
+  max-height: 92%;
+  object-fit: contain;
+  transform-origin: center;
+  transition: transform 100ms ease-out;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.zoom-stage.dragging img {
+  transition: none;
+}
+
+.zoom-help {
+  margin: 0;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .image-zoom {
+    padding: 10px;
+  }
+
+  .zoom-toolbar {
+    justify-content: center;
+  }
+
+  .zoom-help {
+    font-size: 0.78rem;
+  }
+}

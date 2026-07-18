@@ -1,0 +1,77 @@
+/* Field Trainer v0.6.1 — completed image zoom */
+
+.zoom-toolbar {
+  align-items: center;
+}
+
+.zoom-control {
+  min-width: 46px;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.zoom-percent {
+  min-width: 62px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.zoom-close {
+  min-width: 46px;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.zoom-stage {
+  cursor: default;
+  overscroll-behavior: contain;
+}
+
+.zoom-stage.can-pan {
+  cursor: grab;
+}
+
+.zoom-stage.dragging {
+  cursor: grabbing;
+}
+
+.zoom-stage img {
+  transition:
+    transform 90ms ease-out,
+    opacity 120ms ease-out;
+}
+
+.zoom-stage.dragging img {
+  transition: none;
+}
+
+@media (max-width: 640px) {
+  .image-zoom {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .zoom-toolbar {
+    display: grid;
+    grid-template-columns: auto auto auto auto 1fr;
+    justify-content: stretch;
+  }
+
+  .zoom-toolbar button,
+  .zoom-percent {
+    min-height: 44px;
+  }
+
+  .zoom-close {
+    justify-self: end;
+  }
+
+  .zoom-stage img {
+    max-width: 96%;
+    max-height: 96%;
+  }
+}

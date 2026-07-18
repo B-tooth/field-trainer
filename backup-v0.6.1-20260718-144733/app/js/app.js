@@ -21,11 +21,7 @@ const state = {
   zoomY: 0,
   zoomDragging: false,
   zoomPointerX: 0,
-  zoomPointerY: 0,
-  zoomPointers: new Map(),
-  zoomPinchDistance: 0,
-  zoomPinchScale: 1,
-  zoomLastTap: 0
+  zoomPointerY: 0
 };
 
 const $ = (id) => document.getElementById(id);
@@ -635,9 +631,6 @@ function openImageZoom(sourceImage) {
   state.zoomX = 0;
   state.zoomY = 0;
   state.zoomDragging = false;
-  state.zoomPointers.clear();
-  state.zoomPinchDistance = 0;
-  state.zoomPinchScale = 1;
 
   updateZoomTransform();
 
@@ -649,65 +642,18 @@ function openImageZoom(sourceImage) {
 function closeImageZoom() {
   $('imageZoom').classList.add('hidden');
   document.body.classList.remove('zoom-open');
-  state.zoomPointers.clear();
-  state.zoomDragging = false;
-}
-
-function getZoomBounds(scale = state.zoomScale) {
-  const stage = $('zoomStage');
-  const image = $('zoomImage');
-  const stageRect = stage.getBoundingClientRect();
-
-  const naturalRatio =
-    image.naturalWidth && image.naturalHeight
-      ? image.naturalWidth / image.naturalHeight
-      : 1;
-
-  let baseWidth = stageRect.width * 0.92;
-  let baseHeight = baseWidth / naturalRatio;
-
-  if (baseHeight > stageRect.height * 0.92) {
-    baseHeight = stageRect.height * 0.92;
-    baseWidth = baseHeight * naturalRatio;
-  }
-
-  const scaledWidth = baseWidth * scale;
-  const scaledHeight = baseHeight * scale;
-
-  return {
-    x: Math.max(0, (scaledWidth - stageRect.width) / 2),
-    y: Math.max(0, (scaledHeight - stageRect.height) / 2)
-  };
-}
-
-function clampZoomPosition() {
-  if (state.zoomScale <= 1) {
-    state.zoomX = 0;
-    state.zoomY = 0;
-    return;
-  }
-
-  const bounds = getZoomBounds();
-
-  state.zoomX = Math.min(bounds.x, Math.max(-bounds.x, state.zoomX));
-  state.zoomY = Math.min(bounds.y, Math.max(-bounds.y, state.zoomY));
 }
 
 function updateZoomTransform() {
-  clampZoomPosition();
-
   $('zoomImage').style.transform =
-    `translate3d(${state.zoomX}px, ${state.zoomY}px, 0) scale(${state.zoomScale})`;
-
-  $('zoomPercent').textContent = `${Math.round(state.zoomScale * 100)}%`;
-  $('zoomStage').classList.toggle('can-pan', state.zoomScale > 1);
+    `translate(${state.zoomX}px, ${state.zoomY}px) scale(${state.zoomScale})`;
 }
 
-function setZoom(newScale, clientX, clientY) {
+function changeZoom(delta, clientX, clientY) {
   const oldScale = state.zoomScale;
-  const nextScale = Math.min(5, Math.max(1, newScale));
+  const newScale = Math.min(5, Math.max(1, oldScale + delta));
 
-  if (nextScale === oldScale) {
+  if (newScale === oldScale) {
     return;
   }
 
@@ -716,17 +662,18 @@ function setZoom(newScale, clientX, clientY) {
   const focusY = clientY ?? rect.top + rect.height / 2;
   const localX = focusX - rect.left - rect.width / 2;
   const localY = focusY - rect.top - rect.height / 2;
-  const ratio = nextScale / oldScale;
+  const ratio = newScale / oldScale;
 
   state.zoomX = localX - (localX - state.zoomX) * ratio;
   state.zoomY = localY - (localY - state.zoomY) * ratio;
-  state.zoomScale = nextScale;
+  state.zoomScale = newScale;
+
+  if (newScale === 1) {
+    state.zoomX = 0;
+    state.zoomY = 0;
+  }
 
   updateZoomTransform();
-}
-
-function changeZoom(delta, clientX, clientY) {
-  setZoom(state.zoomScale + delta, clientX, clientY);
 }
 
 function resetImageZoom() {
@@ -736,68 +683,20 @@ function resetImageZoom() {
   updateZoomTransform();
 }
 
-function pointerDistance(points) {
-  const [a, b] = points;
-
-  return Math.hypot(
-    b.clientX - a.clientX,
-    b.clientY - a.clientY
-  );
-}
-
-function pointerMidpoint(points) {
-  const [a, b] = points;
-
-  return {
-    x: (a.clientX + b.clientX) / 2,
-    y: (a.clientY + b.clientY) / 2
-  };
-}
-
-function startZoomPointer(event) {
-  state.zoomPointers.set(event.pointerId, event);
-
-  const stage = $('zoomStage');
-
-  if (state.zoomPointers.size === 2) {
-    const points = [...state.zoomPointers.values()];
-    state.zoomPinchDistance = pointerDistance(points);
-    state.zoomPinchScale = state.zoomScale;
-    state.zoomDragging = false;
-    stage.classList.remove('dragging');
+function startZoomDrag(event) {
+  if (state.zoomScale <= 1) {
     return;
   }
 
-  if (state.zoomScale > 1) {
-    state.zoomDragging = true;
-    state.zoomPointerX = event.clientX;
-    state.zoomPointerY = event.clientY;
-    stage.classList.add('dragging');
-  }
+  state.zoomDragging = true;
+  state.zoomPointerX = event.clientX;
+  state.zoomPointerY = event.clientY;
 
-  stage.setPointerCapture(event.pointerId);
+  $('zoomStage').setPointerCapture(event.pointerId);
+  $('zoomStage').classList.add('dragging');
 }
 
-function moveZoomPointer(event) {
-  if (!state.zoomPointers.has(event.pointerId)) {
-    return;
-  }
-
-  state.zoomPointers.set(event.pointerId, event);
-
-  if (state.zoomPointers.size === 2) {
-    const points = [...state.zoomPointers.values()];
-    const distance = pointerDistance(points);
-    const midpoint = pointerMidpoint(points);
-
-    if (state.zoomPinchDistance > 0) {
-      const scale = state.zoomPinchScale * (distance / state.zoomPinchDistance);
-      setZoom(scale, midpoint.x, midpoint.y);
-    }
-
-    return;
-  }
-
+function moveZoomDrag(event) {
   if (!state.zoomDragging) {
     return;
   }
@@ -810,52 +709,16 @@ function moveZoomPointer(event) {
   updateZoomTransform();
 }
 
-function endZoomPointer(event) {
-  state.zoomPointers.delete(event.pointerId);
-
-  if ($('zoomStage').hasPointerCapture(event.pointerId)) {
-    $('zoomStage').releasePointerCapture(event.pointerId);
-  }
-
-  if (state.zoomPointers.size < 2) {
-    state.zoomPinchDistance = 0;
-  }
-
-  if (state.zoomPointers.size === 1 && state.zoomScale > 1) {
-    const remaining = [...state.zoomPointers.values()][0];
-    state.zoomDragging = true;
-    state.zoomPointerX = remaining.clientX;
-    state.zoomPointerY = remaining.clientY;
-  } else {
-    state.zoomDragging = false;
-    $('zoomStage').classList.remove('dragging');
-  }
-
-  updateZoomTransform();
-}
-
-function handleZoomDoubleAction(event) {
-  event.preventDefault();
-
-  if (state.zoomScale > 1) {
-    resetImageZoom();
-  } else {
-    setZoom(2, event.clientX, event.clientY);
-  }
-}
-
-function handleZoomTap(event) {
-  if (event.pointerType !== 'touch') {
+function endZoomDrag(event) {
+  if (!state.zoomDragging) {
     return;
   }
 
-  const now = Date.now();
+  state.zoomDragging = false;
+  $('zoomStage').classList.remove('dragging');
 
-  if (now - state.zoomLastTap < 320) {
-    handleZoomDoubleAction(event);
-    state.zoomLastTap = 0;
-  } else {
-    state.zoomLastTap = now;
+  if ($('zoomStage').hasPointerCapture(event.pointerId)) {
+    $('zoomStage').releasePointerCapture(event.pointerId);
   }
 }
 
@@ -1008,15 +871,11 @@ $('zoomStage').addEventListener('wheel', (event) => {
   changeZoom(event.deltaY < 0 ? 0.35 : -0.35, event.clientX, event.clientY);
 }, { passive: false });
 
-$('zoomStage').addEventListener('dblclick', handleZoomDoubleAction);
-$('zoomStage').addEventListener('pointerdown', startZoomPointer);
-$('zoomStage').addEventListener('pointermove', moveZoomPointer);
-$('zoomStage').addEventListener('pointerup', (event) => {
-  handleZoomTap(event);
-  endZoomPointer(event);
-});
-$('zoomStage').addEventListener('pointercancel', endZoomPointer);
-window.addEventListener('resize', updateZoomTransform);
+$('zoomStage').addEventListener('dblclick', resetImageZoom);
+$('zoomStage').addEventListener('pointerdown', startZoomDrag);
+$('zoomStage').addEventListener('pointermove', moveZoomDrag);
+$('zoomStage').addEventListener('pointerup', endZoomDrag);
+$('zoomStage').addEventListener('pointercancel', endZoomDrag);
 
 document.addEventListener('keydown', (event) => {
   if (
