@@ -173,10 +173,10 @@
     <section id="resultsView" class="hidden">
       <div class="results-card card">
         <p id="resultsDeckName" class="eyebrow"></p>
-        <h2>Test complete</h2>
+        <h2 id="resultsTitle">Test complete</h2>
 
-        <p class="results-message">
-          You have completed every card in this deck.
+        <p id="resultsMessage" class="results-message">
+          You have completed this test session.
         </p>
 
         <div class="results-score">
@@ -202,6 +202,10 @@
         </div>
 
         <div class="results-actions">
+          <button id="reviewMistakesButton" class="primary hidden">
+            Review mistakes
+          </button>
+
           <button id="restartOrderedButton" class="primary">
             Repeat In Order
           </button>

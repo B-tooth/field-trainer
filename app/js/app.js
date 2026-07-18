@@ -12,7 +12,10 @@ const state = {
   orderedIndex: 0,
   sessionRight: 0,
   sessionWrong: 0,
-  sessionSeen: new Set()
+  sessionSeen: new Set(),
+  mistakeCards: [],
+  reviewCards: [],
+  reviewIndex: 0
 };
 
 const $ = (id) => document.getElementById(id);
@@ -151,6 +154,9 @@ function setDeck(deck, path) {
   state.sessionRight = 0;
   state.sessionWrong = 0;
   state.sessionSeen = new Set();
+  state.mistakeCards = [];
+  state.reviewCards = [];
+  state.reviewIndex = 0;
 }
 
 function ensureDeck(deck, path) {
@@ -233,6 +239,9 @@ function startSmartTest() {
   state.sessionRight = 0;
   state.sessionWrong = 0;
   state.sessionSeen = new Set();
+  state.mistakeCards = [];
+  state.reviewCards = [];
+  state.reviewIndex = 0;
 
   $('deckName').textContent = state.deck.name;
   $('testHeading').textContent = 'Smart Random';
@@ -244,10 +253,11 @@ function startSmartTest() {
 
 function startOrderedTest() {
   if (!state.deck) {
-  console.error('No deck selected');
-  showView('homeView');
-  return;
-}
+    console.error('No deck selected');
+    showView('homeView');
+    return;
+  }
+
   state.mode = 'test';
   state.testType = 'ordered';
   state.current = null;
@@ -256,6 +266,9 @@ function startOrderedTest() {
   state.sessionRight = 0;
   state.sessionWrong = 0;
   state.sessionSeen = new Set();
+  state.mistakeCards = [];
+  state.reviewCards = [];
+  state.reviewIndex = 0;
 
   $('deckName').textContent = state.deck.name;
   $('testHeading').textContent = 'In Order';
@@ -315,6 +328,35 @@ function showOrderedCard() {
   displayTestCard(card);
 }
 
+function startMistakeReview() {
+  if (state.mistakeCards.length === 0) {
+    return;
+  }
+
+  state.reviewCards = [...state.mistakeCards];
+  state.mistakeCards = [];
+  state.reviewIndex = 0;
+  state.mode = 'test';
+  state.testType = 'review';
+  state.current = null;
+  state.shown = 0;
+  state.sessionRight = 0;
+  state.sessionWrong = 0;
+  state.sessionSeen = new Set();
+
+  $('deckName').textContent = state.deck.name;
+  $('testHeading').textContent = 'Review mistakes';
+
+  updateStats();
+  showReviewCard();
+  showView('studyView');
+}
+
+function showReviewCard() {
+  const card = state.reviewCards[state.reviewIndex];
+  displayTestCard(card);
+}
+
 function displayTestCard(card) {
   state.current = card;
   state.shown += 1;
@@ -343,6 +385,19 @@ function updateSessionProgress() {
 
     $('testProgressBar').style.width =
       `${(currentNumber / total) * 100}%`;
+
+    return;
+  }
+
+  if (state.testType === 'review') {
+    const reviewTotal = state.reviewCards.length;
+    const currentNumber = state.reviewIndex + 1;
+
+    $('progressText').textContent =
+      `Mistake ${currentNumber} of ${reviewTotal}`;
+
+    $('testProgressBar').style.width =
+      `${(currentNumber / reviewTotal) * 100}%`;
 
     return;
   }
@@ -377,9 +432,20 @@ function rate(isRight) {
 
   if (state.testType === 'ordered') {
     moveToNextOrderedCard();
-  } else {
-    chooseSmartCard();
+    return;
   }
+
+  if (state.testType === 'review') {
+    moveToNextReviewCard();
+    return;
+  }
+
+  if (state.sessionSeen.size >= state.deck.cards.length) {
+    showResults();
+    return;
+  }
+
+  chooseSmartCard();
 }
 
 function recordAnswer(isRight) {
@@ -398,6 +464,14 @@ function recordAnswer(isRight) {
     progress.wrong += 1;
     progress.cards[state.current.id].wrong += 1;
     state.sessionWrong += 1;
+
+    const alreadyRecorded = state.mistakeCards.some(
+      (card) => card.id === state.current.id
+    );
+
+    if (!alreadyRecorded) {
+      state.mistakeCards.push(state.current);
+    }
   }
 
   saveProgress(progress);
@@ -417,7 +491,21 @@ function moveToNextOrderedCard() {
   showOrderedCard();
 }
 
+function moveToNextReviewCard() {
+  const isFinalCard =
+    state.reviewIndex >= state.reviewCards.length - 1;
+
+  if (isFinalCard) {
+    showResults();
+    return;
+  }
+
+  state.reviewIndex += 1;
+  showReviewCard();
+}
+
 function showResults() {
+  const completedTestType = state.testType;
   state.mode = 'results';
 
   const total =
@@ -427,11 +515,29 @@ function showResults() {
     ? Math.round((state.sessionRight / total) * 100)
     : 0;
 
+  const isReview = completedTestType === 'review';
+
   $('resultsDeckName').textContent = state.deck.name;
+  $('resultsTitle').textContent =
+    isReview ? 'Review complete' : 'Test complete';
+  $('resultsMessage').textContent =
+    isReview
+      ? 'You have reviewed every card from your previous mistakes.'
+      : 'You have completed this test session.';
   $('resultsAccuracy').textContent = `${accuracy}%`;
   $('resultsRight').textContent = state.sessionRight;
   $('resultsWrong').textContent = state.sessionWrong;
   $('resultsTotal').textContent = total;
+
+  $('reviewMistakesButton').classList.toggle(
+    'hidden',
+    state.mistakeCards.length === 0
+  );
+
+  $('restartOrderedButton').classList.toggle(
+    'hidden',
+    completedTestType !== 'ordered'
+  );
 
   showView('resultsView');
 }
@@ -466,13 +572,22 @@ function resetProgress() {
   state.sessionSeen = new Set();
   state.shown = 0;
 
+  state.mistakeCards = [];
+
   if (state.testType === 'ordered') {
     state.orderedIndex = 0;
     showOrderedCard();
-  } else {
-    state.current = null;
-    chooseSmartCard();
+    return;
   }
+
+  if (state.testType === 'review') {
+    state.reviewIndex = 0;
+    showReviewCard();
+    return;
+  }
+
+  state.current = null;
+  chooseSmartCard();
 }
 
 function goHome() {
@@ -578,6 +693,11 @@ $('wrongButton').addEventListener(
 $('resetButton').addEventListener(
   'click',
   resetProgress
+);
+
+$('reviewMistakesButton').addEventListener(
+  'click',
+  startMistakeReview
 );
 
 $('restartOrderedButton').addEventListener(
