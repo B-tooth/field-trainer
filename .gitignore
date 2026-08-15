@@ -1,6 +1,20 @@
-~$*.pptx
+# Field Trainer local backups
+backups/
+backup-*/
+
+# Version-specific installer files
+install-v*.ps1
+
+# Temporary update packages
+update-files/
+
+# Version-specific release notes
+README-v*.txt
+
+# Windows / editor clutter
+Thumbs.db
+.DS_Store
+
+# Python temporary files
 __pycache__/
 *.pyc
-.vscode/
-.DS_Store
-Thumbs.db
