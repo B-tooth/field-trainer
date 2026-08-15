@@ -16,6 +16,7 @@ const state = {
   mistakeCards: [],
   reviewCards: [],
   reviewIndex: 0,
+  targetedReviewKind: null,
   zoomScale: 1,
   zoomX: 0,
   zoomY: 0,
@@ -25,19 +26,26 @@ const state = {
   zoomPointers: new Map(),
   zoomPinchDistance: 0,
   zoomPinchScale: 1,
-  zoomLastTap: 0
+  zoomLastTap: 0,
+  readFilter: '',
+  readCards: [],
+  readAnswerHidden: false,
+  availableDecks: [],
+  lastDeck: null
 };
 
 const $ = (id) => document.getElementById(id);
 
 const DECK_INDEX = '../decks/index.json';
+const LAST_DECK_KEY = 'field-trainer:last-deck';
 
 const viewIds = [
   'homeView',
   'readView',
   'testSetupView',
   'studyView',
-  'resultsView'
+  'resultsView',
+  'progressView'
 ];
 
 async function fetchJson(path) {
@@ -71,91 +79,325 @@ async function loadDeckIndex() {
   const list = $('deckList');
 
   list.replaceChildren();
+  state.availableDecks = [];
 
   for (const entry of data.decks) {
     const deck = await fetchJson(`../${entry.path}`);
     const deckFolder = `../${entry.path.replace(/deck\.json$/, '')}`;
-    const progress = getProgressFor(deck.id);
-    const totalAnswers = progress.right + progress.wrong;
 
-    const accuracy = totalAnswers
-      ? `${Math.round((progress.right / totalAnswers) * 100)}% accuracy`
-      : 'Not started';
+    state.availableDecks.push({
+      deck,
+      path: deckFolder,
+      indexPath: entry.path
+    });
+  }
 
-    const article = document.createElement('article');
+  $('deckCount').textContent =
+    `${state.availableDecks.length} ${state.availableDecks.length === 1 ? 'study area' : 'study areas'}`;
 
-    article.className = 'deck-card card';
+  state.lastDeck = getLastDeck();
+  renderContinuePanel();
 
-    article.innerHTML = `
-      <div class="deck-card-top">
-        <div>
-          <h3>${escapeHtml(deck.name)}</h3>
-          <p class="deck-meta">
-            ${deck.cards.length} cards · ${accuracy}
-          </p>
-        </div>
-
-        <span class="deck-icon" aria-hidden="true">◉</span>
-      </div>
-
-      <div class="deck-actions">
-        <button class="secondary read-deck-button">Read</button>
-        <button class="primary test-deck-button">Test</button>
-      </div>
-    `;
-
-    article
-      .querySelector('.read-deck-button')
-      .addEventListener('click', () => startReadMode(deck, deckFolder));
-
-    article
-      .querySelector('.test-deck-button')
-      .addEventListener('click', () => openTestSetup(deck, deckFolder));
-
-    list.appendChild(article);
+  for (const item of state.availableDecks) {
+    renderDeckCard(item.deck, item.path, item.indexPath);
   }
 }
 
-function progressKey(deckId) {
-  return `species-flashcards:${deckId}`;
+function getDeckReadiness(deck) {
+  const progress = getProgressFor(deck.id);
+  const records = deck.cards.map((card) => progress.cards[card.id] || {});
+  const reviewed = records.filter((record) => Number(record.seen) > 0);
+  const totalSeen = records.reduce((sum, record) => sum + (Number(record.seen) || 0), 0);
+  const score = reviewed.length
+    ? Math.round(reviewed.reduce((sum, record) => sum + (Number(record.fieldReadiness) || 0), 0) / reviewed.length)
+    : 0;
+
+  return {
+    score,
+    band: FieldTrainerLearning.getReadinessBand(score),
+    reviewedCards: reviewed.length,
+    totalCards: deck.cards.length,
+    totalSeen,
+    progress
+  };
+}
+
+function renderDeckCard(deck, deckFolder, indexPath) {
+  const summary = getDeckReadiness(deck);
+  const isLastDeck = state.lastDeck?.id === deck.id;
+  const article = document.createElement('article');
+  const started = summary.reviewedCards > 0;
+
+  article.className = `deck-card card${isLastDeck ? ' last-deck' : ''}`;
+
+  article.innerHTML = `
+    <div class="deck-card-top">
+      <div>
+        <div class="deck-title-row">
+          <h3>${escapeHtml(deck.name)}</h3>
+          ${isLastDeck ? '<span class="resume-badge">Last used</span>' : ''}
+        </div>
+        <p class="deck-meta">
+          ${deck.cards.length} cards · ${started ? `${summary.reviewedCards} studied` : 'Not started'}
+        </p>
+      </div>
+
+      <div class="deck-readiness" aria-label="${started ? `${summary.score} Field Readiness` : 'No Field Readiness score yet'}">
+        <strong>${started ? summary.score : '—'}</strong>
+        <span>${started ? summary.band : 'New'}</span>
+      </div>
+    </div>
+
+    <div class="mini-progress" aria-label="${summary.score}% Field Readiness">
+      <span style="width:${summary.score}%"></span>
+    </div>
+
+    <div class="deck-actions deck-actions-three">
+      <button class="secondary progress-deck-button">Progress</button>
+      <button class="secondary read-deck-button">Read</button>
+      <button class="primary test-deck-button">Test</button>
+    </div>
+  `;
+
+  article
+    .querySelector('.progress-deck-button')
+    .addEventListener('click', () => openProgressDashboard(deck, deckFolder, indexPath));
+
+  article
+    .querySelector('.read-deck-button')
+    .addEventListener('click', () => startReadMode(deck, deckFolder, indexPath));
+
+  article
+    .querySelector('.test-deck-button')
+    .addEventListener('click', () => openTestSetup(deck, deckFolder, indexPath));
+
+  $('deckList').appendChild(article);
+}
+
+function getTargetedReviewCards(kind) {
+  const progress = getProgress();
+  const now = Date.now();
+  const forgottenAfterDays = 30;
+
+  const candidates = state.deck.cards
+    .map((card) => ({
+      card,
+      record: progress.cards[card.id] || {}
+    }));
+
+  if (kind === 'weak') {
+    return candidates
+      .filter(({ record }) => {
+        const seen = Number(record.seen) || 0;
+        const score = Number(record.fieldReadiness) || 0;
+        return seen > 0 && score < 65;
+      })
+      .sort((a, b) => {
+        const scoreDifference =
+          (Number(a.record.fieldReadiness) || 0) -
+          (Number(b.record.fieldReadiness) || 0);
+
+        if (scoreDifference !== 0) {
+          return scoreDifference;
+        }
+
+        const aReviewed = Date.parse(a.record.lastReviewed || '') || 0;
+        const bReviewed = Date.parse(b.record.lastReviewed || '') || 0;
+        return aReviewed - bReviewed;
+      })
+      .map(({ card }) => card);
+  }
+
+  if (kind === 'forgotten') {
+    return candidates
+      .filter(({ record }) => {
+        const seen = Number(record.seen) || 0;
+        const reviewedAt = Date.parse(record.lastReviewed || '');
+
+        if (!seen || !Number.isFinite(reviewedAt)) {
+          return false;
+        }
+
+        return (now - reviewedAt) / 86400000 >= forgottenAfterDays;
+      })
+      .sort((a, b) => {
+        const aReviewed = Date.parse(a.record.lastReviewed || '') || 0;
+        const bReviewed = Date.parse(b.record.lastReviewed || '') || 0;
+        return aReviewed - bReviewed;
+      })
+      .map(({ card }) => card);
+  }
+
+  return [];
+}
+
+function openProgressDashboard(deck, path, indexPath) {
+  ensureDeck(deck, path, indexPath);
+  state.mode = 'progress';
+
+  const summary = getDeckReadiness(state.deck);
+  const weakCards = getTargetedReviewCards('weak');
+  const forgottenCards = getTargetedReviewCards('forgotten');
+
+  $('progressDeckName').textContent = state.deck.name;
+  $('progressReadinessScore').textContent = summary.reviewedCards ? summary.score : '—';
+  $('progressReadinessBand').textContent = summary.reviewedCards
+    ? summary.band
+    : 'No cards studied yet';
+  $('progressReadinessBar').style.width = `${summary.score}%`;
+  $('progressCardCount').textContent = summary.totalCards;
+  $('progressReviewCount').textContent = summary.totalSeen;
+  $('progressSessionCount').textContent = Number(summary.progress.sessions) || 0;
+  $('progressNeedsPractice').textContent = weakCards.length;
+  $('progressForgotten').textContent = forgottenCards.length;
+
+  const weakButton = $('progressWeakButton');
+  const forgottenButton = $('progressForgottenButton');
+
+  weakButton.disabled = weakCards.length === 0;
+  weakButton.textContent = weakCards.length
+    ? `Review weak cards (${weakCards.length})`
+    : 'No weak cards to review';
+  weakButton.title = weakCards.length
+    ? 'Review cards with Field Readiness below 65'
+    : 'Study some cards first, or keep practising until cards need attention';
+
+  forgottenButton.disabled = forgottenCards.length === 0;
+  forgottenButton.textContent = forgottenCards.length
+    ? `Review forgotten cards (${forgottenCards.length})`
+    : 'No forgotten cards yet';
+  forgottenButton.title = forgottenCards.length
+    ? 'Review cards not studied for at least 30 days'
+    : 'A card is considered forgotten after 30 days without review';
+
+  showView('progressView');
+}
+
+function startTargetedReview(kind) {
+  if (!state.deck) {
+    return;
+  }
+
+  const eligibleCards = getTargetedReviewCards(kind);
+
+  if (eligibleCards.length === 0) {
+    openProgressDashboard();
+    return;
+  }
+
+  FieldTrainerLearning.recordSessionStart(state.deck);
+
+  state.reviewCards = eligibleCards.slice(0, 20);
+  state.reviewIndex = 0;
+  state.targetedReviewKind = kind;
+  state.mode = 'test';
+  state.testType = kind;
+  state.current = null;
+  state.shown = 0;
+  state.sessionRight = 0;
+  state.sessionWrong = 0;
+  state.sessionSeen = new Set();
+  state.mistakeCards = [];
+
+  $('deckName').textContent = state.deck.name;
+  $('testHeading').textContent =
+    kind === 'weak'
+      ? 'Review weak cards'
+      : 'Review forgotten cards';
+
+  updateStats();
+  showReviewCard();
+  showView('studyView');
+}
+
+function saveLastDeck(indexPath) {
+  if (!state.deck || !indexPath) {
+    return;
+  }
+
+  const saved = {
+    id: state.deck.id,
+    name: state.deck.name,
+    indexPath,
+    updatedAt: new Date().toISOString()
+  };
+
+  localStorage.setItem(LAST_DECK_KEY, JSON.stringify(saved));
+  state.lastDeck = saved;
+}
+
+function getLastDeck() {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_DECK_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function getLastDeckItem() {
+  if (!state.lastDeck) {
+    return null;
+  }
+
+  return state.availableDecks.find(
+    (item) => item.deck.id === state.lastDeck.id
+  ) || null;
+}
+
+function renderContinuePanel() {
+  const item = getLastDeckItem();
+  const panel = $('continuePanel');
+
+  panel.classList.toggle('hidden', !item);
+
+  if (!item) {
+    return;
+  }
+
+  const summary = getDeckReadiness(item.deck);
+  const readiness = summary.reviewedCards
+    ? `${summary.score} Field Readiness`
+    : 'Not started yet';
+
+  $('continueDeckDetails').textContent =
+    `${item.deck.name} · ${item.deck.cards.length} cards · ${readiness}`;
+}
+
+function continueLastDeck(mode) {
+  const item = getLastDeckItem();
+
+  if (!item) {
+    return;
+  }
+
+  if (mode === 'read') {
+    startReadMode(item.deck, item.path, item.indexPath);
+  } else {
+    openTestSetup(item.deck, item.path, item.indexPath);
+  }
+}
+
+function getDeckById(deckId) {
+  return state.availableDecks.find((item) => item.deck.id === deckId)?.deck
+    || (state.deck?.id === deckId ? state.deck : null);
 }
 
 function getProgressFor(deckId) {
-  const empty = {
-    right: 0,
-    wrong: 0,
-    cards: {}
-  };
+  const deck = getDeckById(deckId);
 
-  try {
-    const saved = JSON.parse(
-      localStorage.getItem(progressKey(deckId)) || '{}'
-    );
-
-    return {
-      ...empty,
-      ...saved,
-      cards: saved.cards || {}
-    };
-  } catch {
-    return empty;
-  }
+  return deck
+    ? FieldTrainerLearning.getDeckProgress(deck)
+    : { right: 0, wrong: 0, cards: {} };
 }
 
 function getProgress() {
-  return getProgressFor(state.deck.id);
+  return FieldTrainerLearning.getDeckProgress(state.deck);
 }
 
-function saveProgress(progress) {
-  localStorage.setItem(
-    progressKey(state.deck.id),
-    JSON.stringify(progress)
-  );
-}
-
-function setDeck(deck, path) {
+function setDeck(deck, path, indexPath) {
   state.deck = deck;
   state.deckPath = path;
+  state.deckIndexPath = indexPath || state.deckIndexPath;
   state.current = null;
   state.shown = 0;
   state.answerVisible = false;
@@ -167,45 +409,85 @@ function setDeck(deck, path) {
   state.mistakeCards = [];
   state.reviewCards = [];
   state.reviewIndex = 0;
+  state.targetedReviewKind = null;
+  state.readFilter = '';
+  state.readCards = [...deck.cards];
+  state.readAnswerHidden = false;
+
+  FieldTrainerLearning.prepareDeck(state.deck);
+  saveLastDeck(state.deckIndexPath);
 }
 
-function ensureDeck(deck, path) {
+function ensureDeck(deck, path, indexPath) {
   if (deck && path) {
-    setDeck(deck, path);
+    setDeck(deck, path, indexPath);
   }
 }
 
-function startReadMode(deck, path) {
-  ensureDeck(deck, path);
+function startReadMode(deck, path, indexPath) {
+  ensureDeck(deck, path, indexPath);
 
   state.mode = 'read';
   state.testType = null;
   state.readIndex = 0;
+  state.readFilter = '';
+  state.readCards = [...state.deck.cards];
+  state.readAnswerHidden = false;
 
   $('readDeckName').textContent = state.deck.name;
+  $('readSearchInput').value = '';
+  updateReadAnswerVisibility();
 
   renderReadCard();
   showView('readView');
 }
 
+function animateCard(elementId) {
+  const element = $(elementId);
+
+  element.classList.remove('card-enter');
+  void element.offsetWidth;
+  element.classList.add('card-enter');
+}
+
 function renderReadCard() {
-  const card = state.deck.cards[state.readIndex];
+  const hasCards = state.readCards.length > 0;
+
+  $('readFlashcard').classList.toggle('hidden', !hasCards);
+  $('readNoResults').classList.toggle('hidden', hasCards);
+  $('previousReadButton').classList.toggle('hidden', !hasCards);
+  $('nextReadButton').classList.toggle('hidden', !hasCards);
+  $('readProgress').classList.toggle('hidden', !hasCards);
+  $('readProgressBar').parentElement.classList.toggle('hidden', !hasCards);
+
+  if (!hasCards) {
+    $('readSearchSummary').textContent =
+      `No results for “${state.readFilter}”`;
+    $('readSearchSummary').classList.remove('hidden');
+    return;
+  }
+
+  const card = state.readCards[state.readIndex];
   const currentNumber = state.readIndex + 1;
-  const total = state.deck.cards.length;
+  const total = state.readCards.length;
 
   $('readCardImage').src = `${state.deckPath}${card.image}`;
   $('readCardImage').alt = `${card.answer} slide`;
   $('readAnswerText').textContent = card.answer;
   $('readProgress').textContent = `${currentNumber} of ${total}`;
-  $('readProgressBar').style.width =
-    `${(currentNumber / total) * 100}%`;
+  $('readProgressBar').style.width = `${(currentNumber / total) * 100}%`;
 
   $('previousReadButton').disabled = state.readIndex === 0;
-
   $('nextReadButton').textContent =
-    state.readIndex === total - 1
-      ? 'Back to start ↻'
-      : 'Next →';
+    state.readIndex === total - 1 ? 'Back to start ↻' : 'Next →';
+
+  const filtered = Boolean(state.readFilter);
+  $('readSearchSummary').classList.toggle('hidden', !filtered);
+  $('readSearchSummary').textContent = filtered
+    ? `${total} matching ${total === 1 ? 'species' : 'species'}`
+    : '';
+
+  animateCard('readFlashcard');
 }
 
 function moveReadCard(direction) {
@@ -215,7 +497,7 @@ function moveReadCard(direction) {
 
   if (direction > 0) {
     state.readIndex =
-      state.readIndex === state.deck.cards.length - 1
+      state.readIndex === state.readCards.length - 1
         ? 0
         : state.readIndex + 1;
   }
@@ -228,8 +510,37 @@ function moveReadCard(direction) {
   });
 }
 
-function openTestSetup(deck, path) {
-  ensureDeck(deck, path);
+function filterReadCards(query) {
+  state.readFilter = query.trim();
+  const normalized = state.readFilter.toLocaleLowerCase();
+
+  state.readCards = normalized
+    ? state.deck.cards.filter((card) =>
+        card.answer.toLocaleLowerCase().includes(normalized)
+      )
+    : [...state.deck.cards];
+
+  state.readIndex = 0;
+  renderReadCard();
+}
+
+function updateReadAnswerVisibility() {
+  $('readAnswerPanel').classList.toggle('answer-collapsed', state.readAnswerHidden);
+  $('toggleReadAnswerButton').textContent =
+    state.readAnswerHidden ? 'Show answer' : 'Hide answer';
+  $('toggleReadAnswerButton').setAttribute(
+    'aria-pressed',
+    String(state.readAnswerHidden)
+  );
+}
+
+function toggleReadAnswer() {
+  state.readAnswerHidden = !state.readAnswerHidden;
+  updateReadAnswerVisibility();
+}
+
+function openTestSetup(deck, path, indexPath) {
+  ensureDeck(deck, path, indexPath);
 
   state.mode = 'test-setup';
   state.testType = null;
@@ -242,6 +553,7 @@ function openTestSetup(deck, path) {
 }
 
 function startSmartTest() {
+  FieldTrainerLearning.recordSessionStart(state.deck);
   state.mode = 'test';
   state.testType = 'smart';
   state.current = null;
@@ -252,6 +564,7 @@ function startSmartTest() {
   state.mistakeCards = [];
   state.reviewCards = [];
   state.reviewIndex = 0;
+  state.targetedReviewKind = null;
 
   $('deckName').textContent = state.deck.name;
   $('testHeading').textContent = 'Smart Random';
@@ -268,6 +581,8 @@ function startOrderedTest() {
     return;
   }
 
+  FieldTrainerLearning.recordSessionStart(state.deck);
+
   state.mode = 'test';
   state.testType = 'ordered';
   state.current = null;
@@ -279,6 +594,7 @@ function startOrderedTest() {
   state.mistakeCards = [];
   state.reviewCards = [];
   state.reviewIndex = 0;
+  state.targetedReviewKind = null;
 
   $('deckName').textContent = state.deck.name;
   $('testHeading').textContent = 'In Order';
@@ -343,9 +659,12 @@ function startMistakeReview() {
     return;
   }
 
+  FieldTrainerLearning.recordSessionStart(state.deck);
+
   state.reviewCards = [...state.mistakeCards];
   state.mistakeCards = [];
   state.reviewIndex = 0;
+  state.targetedReviewKind = null;
   state.mode = 'test';
   state.testType = 'review';
   state.current = null;
@@ -382,6 +701,7 @@ function displayTestCard(card) {
   $('revealControls').classList.remove('hidden');
 
   updateSessionProgress();
+  animateCard('testFlashcard');
 }
 
 function updateSessionProgress() {
@@ -399,12 +719,18 @@ function updateSessionProgress() {
     return;
   }
 
-  if (state.testType === 'review') {
+  if (['review', 'weak', 'forgotten'].includes(state.testType)) {
     const reviewTotal = state.reviewCards.length;
     const currentNumber = state.reviewIndex + 1;
+    const label =
+      state.testType === 'review'
+        ? 'Mistake'
+        : state.testType === 'weak'
+          ? 'Weak card'
+          : 'Forgotten card';
 
     $('progressText').textContent =
-      `Mistake ${currentNumber} of ${reviewTotal}`;
+      `${label} ${currentNumber} of ${reviewTotal}`;
 
     $('testProgressBar').style.width =
       `${(currentNumber / reviewTotal) * 100}%`;
@@ -445,7 +771,7 @@ function rate(isRight) {
     return;
   }
 
-  if (state.testType === 'review') {
+  if (['review', 'weak', 'forgotten'].includes(state.testType)) {
     moveToNextReviewCard();
     return;
   }
@@ -459,20 +785,15 @@ function rate(isRight) {
 }
 
 function recordAnswer(isRight) {
-  const progress = getProgress();
-
-  progress.cards[state.current.id] ||= {
-    right: 0,
-    wrong: 0
-  };
+  FieldTrainerLearning.recordAnswer(
+    state.deck,
+    state.current.id,
+    isRight
+  );
 
   if (isRight) {
-    progress.right += 1;
-    progress.cards[state.current.id].right += 1;
     state.sessionRight += 1;
   } else {
-    progress.wrong += 1;
-    progress.cards[state.current.id].wrong += 1;
     state.sessionWrong += 1;
 
     const alreadyRecorded = state.mistakeCards.some(
@@ -484,7 +805,6 @@ function recordAnswer(isRight) {
     }
   }
 
-  saveProgress(progress);
   updateStats();
 }
 
@@ -525,15 +845,29 @@ function showResults() {
     ? Math.round((state.sessionRight / total) * 100)
     : 0;
 
-  const isReview = completedTestType === 'review';
+  const resultCopy = {
+    review: {
+      title: 'Review complete',
+      message: 'You have reviewed every card from your previous mistakes.'
+    },
+    weak: {
+      title: 'Weak card review complete',
+      message: 'You have completed this weak-card review session.'
+    },
+    forgotten: {
+      title: 'Forgotten card review complete',
+      message: 'You have completed this forgotten-card review session.'
+    }
+  };
+
+  const copy = resultCopy[completedTestType] || {
+    title: 'Test complete',
+    message: 'You have completed this test session.'
+  };
 
   $('resultsDeckName').textContent = state.deck.name;
-  $('resultsTitle').textContent =
-    isReview ? 'Review complete' : 'Test complete';
-  $('resultsMessage').textContent =
-    isReview
-      ? 'You have reviewed every card from your previous mistakes.'
-      : 'You have completed this test session.';
+  $('resultsTitle').textContent = copy.title;
+  $('resultsMessage').textContent = copy.message;
   $('resultsAccuracy').textContent = `${accuracy}%`;
   $('resultsRight').textContent = state.sessionRight;
   $('resultsWrong').textContent = state.sessionWrong;
@@ -573,7 +907,8 @@ function resetProgress() {
     return;
   }
 
-  localStorage.removeItem(progressKey(state.deck.id));
+  FieldTrainerLearning.resetDeck(state.deck.id);
+  FieldTrainerLearning.prepareDeck(state.deck);
 
   updateStats();
 
@@ -590,7 +925,7 @@ function resetProgress() {
     return;
   }
 
-  if (state.testType === 'review') {
+  if (['review', 'weak', 'forgotten'].includes(state.testType)) {
     state.reviewIndex = 0;
     showReviewCard();
     return;
@@ -885,6 +1220,35 @@ function escapeHtml(value) {
 }
 
 
+$('progressContinueButton').addEventListener('click', startSmartTest);
+$('progressWeakButton').addEventListener('click', () => startTargetedReview('weak'));
+$('progressForgottenButton').addEventListener('click', () => startTargetedReview('forgotten'));
+
+$('continueReadButton').addEventListener(
+  'click',
+  () => continueLastDeck('read')
+);
+
+$('continueTestButton').addEventListener(
+  'click',
+  () => continueLastDeck('test')
+);
+
+$('readSearchInput').addEventListener('input', (event) => {
+  filterReadCards(event.target.value);
+});
+
+$('clearReadSearchButton').addEventListener('click', () => {
+  $('readSearchInput').value = '';
+  filterReadCards('');
+  $('readSearchInput').focus();
+});
+
+$('toggleReadAnswerButton').addEventListener(
+  'click',
+  toggleReadAnswer
+);
+
 $('switchToTestButton').addEventListener(
   'click',
   () => openTestSetup()
@@ -1044,6 +1408,15 @@ document.addEventListener('keydown', (event) => {
   }
 
   if (state.mode === 'read') {
+    if (document.activeElement === $('readSearchInput')) {
+      if (event.code === 'Escape') {
+        $('readSearchInput').value = '';
+        filterReadCards('');
+        $('readSearchInput').blur();
+      }
+      return;
+    }
+
     if (event.code === 'ArrowLeft') {
       moveReadCard(-1);
     }

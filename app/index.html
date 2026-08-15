@@ -30,6 +30,26 @@
         </div>
       </div>
 
+      <section id="continuePanel" class="continue-panel card hidden" aria-labelledby="continueTitle">
+        <div>
+          <p class="eyebrow">CONTINUE LEARNING</p>
+          <h2 id="continueTitle">Return to your last deck</h2>
+          <p id="continueDeckDetails"></p>
+        </div>
+        <div class="continue-actions">
+          <button id="continueReadButton" class="secondary">Continue reading</button>
+          <button id="continueTestButton" class="primary">Continue testing</button>
+        </div>
+      </section>
+
+      <div class="library-heading">
+        <div>
+          <p class="eyebrow">STUDY AREAS</p>
+          <h2>Your study areas</h2>
+        </div>
+        <span id="deckCount" class="deck-count"></span>
+      </div>
+
       <div id="deckList" class="deck-list"></div>
     </section>
 
@@ -43,6 +63,19 @@
         <button id="switchToTestButton" class="secondary">Test deck</button>
       </div>
 
+      <div class="read-tools card">
+        <label class="search-field" for="readSearchInput">
+          <span>Find a species</span>
+          <input id="readSearchInput" type="search" placeholder="Search this deck…" autocomplete="off">
+        </label>
+
+        <button id="toggleReadAnswerButton" class="secondary" aria-pressed="false">
+          Hide answer
+        </button>
+      </div>
+
+      <p id="readSearchSummary" class="search-summary hidden" aria-live="polite"></p>
+
       <div class="progress-row">
         <span id="readProgress"></span>
         <div class="progress-track" aria-hidden="true">
@@ -50,10 +83,16 @@
         </div>
       </div>
 
-      <article class="flashcard read-flashcard">
+      <div id="readNoResults" class="empty-state card hidden">
+        <h3>No matching species</h3>
+        <p>Try a different spelling or clear the search.</p>
+        <button id="clearReadSearchButton" class="secondary">Clear search</button>
+      </div>
+
+      <article id="readFlashcard" class="flashcard read-flashcard card-transition">
         <img id="readCardImage" alt="Reference slide">
 
-        <div class="answer-panel">
+        <div id="readAnswerPanel" class="answer-panel">
           <span>Answer</span>
           <h2 id="readAnswerText"></h2>
         </div>
@@ -126,7 +165,7 @@
         </div>
       </div>
 
-      <article class="flashcard">
+      <article id="testFlashcard" class="flashcard card-transition">
         <img id="cardImage" alt="Flashcard question slide">
 
         <div id="answerPanel" class="answer-panel hidden">
@@ -168,6 +207,62 @@
       <button id="resetButton" class="reset-link">
         Reset this deck's progress
       </button>
+    </section>
+
+    <section id="progressView" class="hidden">
+      <div class="view-heading">
+        <div>
+          <p id="progressDeckName" class="eyebrow"></p>
+          <h2>Progress</h2>
+        </div>
+      </div>
+
+      <section class="readiness-hero card">
+        <div>
+          <p class="eyebrow">FIELD READINESS</p>
+          <div class="readiness-score-line">
+            <strong id="progressReadinessScore">—</strong>
+            <span id="progressReadinessBand">No cards studied yet</span>
+          </div>
+          <div class="readiness-track" aria-hidden="true"><span id="progressReadinessBar"></span></div>
+        </div>
+      </section>
+
+      <section class="progress-metrics" aria-label="Study area progress">
+        <div class="progress-metric card">
+          <span>Cards</span>
+          <strong id="progressCardCount">0</strong>
+        </div>
+        <div class="progress-metric card">
+          <span>Reviews</span>
+          <strong id="progressReviewCount">0</strong>
+        </div>
+        <div class="progress-metric card">
+          <span>Sessions</span>
+          <strong id="progressSessionCount">0</strong>
+        </div>
+        <div class="progress-metric card">
+          <span>Needs practice</span>
+          <strong id="progressNeedsPractice">0</strong>
+        </div>
+        <div class="progress-metric card progress-metric-wide">
+          <span>Forgotten</span>
+          <strong id="progressForgotten">0</strong>
+        </div>
+      </section>
+
+      <section class="progress-study-actions card" aria-labelledby="progressNextTitle">
+        <div>
+          <p class="eyebrow">STUDY NEXT</p>
+          <h2 id="progressNextTitle">Choose your next session</h2>
+        </div>
+        <div class="progress-action-buttons">
+          <button id="progressContinueButton" class="primary">Continue learning</button>
+          <button id="progressWeakButton" class="secondary">Review weak cards</button>
+          <button id="progressForgottenButton" class="secondary">Review forgotten cards</button>
+        </div>
+        <p class="progress-action-note">Targeted reviews include up to 20 cards per session.</p>
+      </section>
     </section>
 
     <section id="resultsView" class="hidden">
@@ -220,6 +315,7 @@
         </div>
       </div>
     </section>
+    <footer class="app-footer">Field Trainer <span id="appVersion">v0.7.3r</span></footer>
   </main>
 
   <div id="imageZoom" class="image-zoom hidden" role="dialog" aria-modal="true" aria-label="Image viewer">
@@ -240,6 +336,7 @@
     </p>
   </div>
 
+  <script src="js/learning-engine.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

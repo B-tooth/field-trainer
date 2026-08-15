@@ -1,45 +1,30 @@
-Field Trainer v0.6.1 — Complete Image Zoom
+Field Trainer v0.6.2 — Quality of Life
 
-This update adds:
-- Pinch-to-zoom on phones and tablets
-- One-finger panning while zoomed
-- Double-tap/double-click zoom toggle
-- Cursor-centred mouse-wheel zoom
-- 100%–500% zoom indicator
-- Automatic limits so the image cannot be dragged completely off-screen
-- Cleaner mobile controls
-- Automatic backup during installation
+NEW FEATURES
+- Search by species name in Read mode
+- Hide/show the answer while browsing
+- Smooth card transitions
+- A more informative deck library with accuracy bars
+- Continue buttons for the most recently used deck
+- Version number displayed in the app
+- Automatic backup and idempotent CSS installation
 
-INSTALLATION
-
-1. Extract the ZIP directly into the ROOT of your project:
+INSTALL
+1. Stop the local server with Ctrl+C.
+2. Extract this ZIP directly into the project root:
    Z:\OneDrive\Documents\Flash_cards\species-flashcards_v0.3
-
-2. In PowerShell, from the project root, run:
-
-   powershell -ExecutionPolicy Bypass -File .\install-v0.6.1.ps1
-
-3. Start the app:
-
+3. From that folder, run:
+   powershell -ExecutionPolicy Bypass -File .\install-v0.6.2.ps1
+4. Start the server:
    python -m http.server 8000
-
-4. Open:
-
+5. Open:
    http://localhost:8000/app/
+6. Hard refresh with Ctrl+Shift+R.
 
-5. Hard refresh with Ctrl+Shift+R.
-
-TEST
-
-Desktop:
-- Click an image.
-- Scroll to zoom around the pointer.
-- Drag to pan.
-- Double-click to switch between fitted and 200%.
-- Press Esc to close.
-
-Phone/tablet:
-- Tap an image.
-- Pinch with two fingers.
-- Drag with one finger while zoomed.
-- Double-tap to switch between fitted and 200%.
+TEST CHECKLIST
+- Open a deck in Read mode and search for part of a species name.
+- Clear the search and move between cards.
+- Hide and show the answer.
+- Return to Decks and confirm the Continue panel appears.
+- Confirm the last-used deck has a badge and accuracy bar.
+- Run a short test and make sure zoom and mistake review still work.
