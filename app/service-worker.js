@@ -1,4 +1,4 @@
-const CACHE_NAME = 'field-trainer-v0.7.3-intelligent-review';
+const CACHE_NAME = 'field-trainer-v0.7.4';
 const APP_SHELL = ['./', './index.html', './css/styles.css', './js/learning-engine.js', './js/app.js', './manifest.webmanifest', '../decks/index.json'];
 self.addEventListener('install', (event) => {
   self.skipWaiting();

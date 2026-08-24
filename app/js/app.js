@@ -1,1467 +1,318 @@
 'use strict';
 
 const state = {
-  deck: null,
-  deckPath: null,
-  current: null,
-  shown: 0,
-  answerVisible: false,
-  mode: null,
-  testType: null,
-  readIndex: 0,
-  orderedIndex: 0,
-  sessionRight: 0,
-  sessionWrong: 0,
-  sessionSeen: new Set(),
-  mistakeCards: [],
-  reviewCards: [],
-  reviewIndex: 0,
-  targetedReviewKind: null,
-  zoomScale: 1,
-  zoomX: 0,
-  zoomY: 0,
-  zoomDragging: false,
-  zoomPointerX: 0,
-  zoomPointerY: 0,
-  zoomPointers: new Map(),
-  zoomPinchDistance: 0,
-  zoomPinchScale: 1,
-  zoomLastTap: 0,
-  readFilter: '',
-  readCards: [],
-  readAnswerHidden: false,
-  availableDecks: [],
-  lastDeck: null
+  deck: null, deckPath: null, deckIndexPath: null, mode: null,
+  availableDecks: [], lastDeck: null,
+  readCards: [], readIndex: 0, readFilter: '', readAnswerHidden: true,
+  learnOrder: 'ordered',
+  testQueue: [], testPosition: 0, testResults: [], current: null,
+  reviewQueue: [], reviewRight: 0, reviewWrong: 0,
+  zoomScale: 1, zoomX: 0, zoomY: 0, zoomDragging: false,
+  zoomPointerX: 0, zoomPointerY: 0, zoomPointers: new Map(),
+  zoomPinchDistance: 0, zoomPinchScale: 1, zoomLastTap: 0
 };
 
 const $ = (id) => document.getElementById(id);
-
 const DECK_INDEX = '../decks/index.json';
 const LAST_DECK_KEY = 'field-trainer:last-deck';
-
-const viewIds = [
-  'homeView',
-  'readView',
-  'testSetupView',
-  'studyView',
-  'resultsView',
-  'progressView'
-];
+const TEST_SESSION_PREFIX = 'field-trainer:test-session:';
+const viewIds = ['homeView','readView','testSetupView','studyView','resultsView','progressView'];
 
 async function fetchJson(path) {
   const response = await fetch(path, { cache: 'no-store' });
-
-  if (!response.ok) {
-    throw new Error(`Could not load ${path}.`);
-  }
-
+  if (!response.ok) throw new Error(`Could not load ${path}.`);
   return response.json();
 }
 
-function showView(viewId) {
-  for (const id of viewIds) {
-    $(id).classList.toggle('hidden', id !== viewId);
+function shuffle(values) {
+  const result = [...values];
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
   }
+  return result;
+}
 
+function showView(viewId) {
+  for (const id of viewIds) $(id).classList.toggle('hidden', id !== viewId);
   const onHome = viewId === 'homeView';
-
   $('homeButton').classList.toggle('hidden', onHome);
   $('backButton').classList.toggle('hidden', onHome);
-
-  window.scrollTo({
-    top: 0,
-    behavior: 'instant'
-  });
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 async function loadDeckIndex() {
   const data = await fetchJson(DECK_INDEX);
-  const list = $('deckList');
-
-  list.replaceChildren();
   state.availableDecks = [];
-
+  $('deckList').replaceChildren();
   for (const entry of data.decks) {
     const deck = await fetchJson(`../${entry.path}`);
-    const deckFolder = `../${entry.path.replace(/deck\.json$/, '')}`;
-
-    state.availableDecks.push({
-      deck,
-      path: deckFolder,
-      indexPath: entry.path
-    });
+    const path = `../${entry.path.replace(/deck\.json$/, '')}`;
+    FieldTrainerLearning.prepareDeck(deck);
+    state.availableDecks.push({ deck, path, indexPath: entry.path });
   }
-
-  $('deckCount').textContent =
-    `${state.availableDecks.length} ${state.availableDecks.length === 1 ? 'study area' : 'study areas'}`;
-
+  $('deckCount').textContent = `${state.availableDecks.length} ${state.availableDecks.length === 1 ? 'study area' : 'study areas'}`;
   state.lastDeck = getLastDeck();
   renderContinuePanel();
-
-  for (const item of state.availableDecks) {
-    renderDeckCard(item.deck, item.path, item.indexPath);
-  }
+  for (const item of state.availableDecks) renderDeckCard(item.deck, item.path, item.indexPath);
 }
 
-function getDeckReadiness(deck) {
-  const progress = getProgressFor(deck.id);
-  const records = deck.cards.map((card) => progress.cards[card.id] || {});
-  const reviewed = records.filter((record) => Number(record.seen) > 0);
-  const totalSeen = records.reduce((sum, record) => sum + (Number(record.seen) || 0), 0);
-  const score = reviewed.length
-    ? Math.round(reviewed.reduce((sum, record) => sum + (Number(record.fieldReadiness) || 0), 0) / reviewed.length)
-    : 0;
-
+function getDeckSummary(deck) {
+  const progress = FieldTrainerLearning.getDeckProgress(deck);
+  const weak = FieldTrainerLearning.getWeakCardIds(deck).length;
   return {
-    score,
-    band: FieldTrainerLearning.getReadinessBand(score),
-    reviewedCards: reviewed.length,
+    score: progress.fieldReadiness,
+    band: progress.readinessBand,
+    weak,
     totalCards: deck.cards.length,
-    totalSeen,
     progress
   };
 }
 
-function renderDeckCard(deck, deckFolder, indexPath) {
-  const summary = getDeckReadiness(deck);
-  const isLastDeck = state.lastDeck?.id === deck.id;
+function renderDeckCard(deck, path, indexPath) {
+  const summary = getDeckSummary(deck);
+  const hasScore = summary.score != null;
+  const savedTest = loadTestSession(deck.id);
   const article = document.createElement('article');
-  const started = summary.reviewedCards > 0;
-
-  article.className = `deck-card card${isLastDeck ? ' last-deck' : ''}`;
-
+  article.className = `deck-card card${state.lastDeck?.id === deck.id ? ' last-deck' : ''}`;
   article.innerHTML = `
     <div class="deck-card-top">
       <div>
-        <div class="deck-title-row">
-          <h3>${escapeHtml(deck.name)}</h3>
-          ${isLastDeck ? '<span class="resume-badge">Last used</span>' : ''}
-        </div>
-        <p class="deck-meta">
-          ${deck.cards.length} cards · ${started ? `${summary.reviewedCards} studied` : 'Not started'}
-        </p>
+        <div class="deck-title-row"><h3>${escapeHtml(deck.name)}</h3>${state.lastDeck?.id === deck.id ? '<span class="resume-badge">Last used</span>' : ''}</div>
+        <p class="deck-meta">${deck.cards.length} cards · ${summary.progress.completedTests} completed ${summary.progress.completedTests === 1 ? 'test' : 'tests'}</p>
       </div>
-
-      <div class="deck-readiness" aria-label="${started ? `${summary.score} Field Readiness` : 'No Field Readiness score yet'}">
-        <strong>${started ? summary.score : '—'}</strong>
-        <span>${started ? summary.band : 'New'}</span>
-      </div>
+      <div class="deck-readiness"><strong>${hasScore ? summary.score : '—'}</strong><span>${hasScore ? summary.band : 'New'}</span></div>
     </div>
-
-    <div class="mini-progress" aria-label="${summary.score}% Field Readiness">
-      <span style="width:${summary.score}%"></span>
-    </div>
-
-    <div class="deck-actions deck-actions-three">
+    <div class="mini-progress"><span style="width:${hasScore ? summary.score : 0}%"></span></div>
+    <div class="deck-actions deck-actions-study">
       <button class="secondary progress-deck-button">Progress</button>
-      <button class="secondary read-deck-button">Read</button>
-      <button class="primary test-deck-button">Test</button>
-    </div>
-  `;
-
-  article
-    .querySelector('.progress-deck-button')
-    .addEventListener('click', () => openProgressDashboard(deck, deckFolder, indexPath));
-
-  article
-    .querySelector('.read-deck-button')
-    .addEventListener('click', () => startReadMode(deck, deckFolder, indexPath));
-
-  article
-    .querySelector('.test-deck-button')
-    .addEventListener('click', () => openTestSetup(deck, deckFolder, indexPath));
-
+      <button class="secondary learn-deck-button">Learn</button>
+      <button class="primary test-deck-button">${savedTest ? `Continue Test · ${savedTest.position}/${savedTest.queue.length}` : 'Test'}</button>
+      <button class="secondary weak-deck-button" ${summary.weak ? '' : 'disabled'}>${summary.weak ? `Review Weak · ${summary.weak}` : 'No Weak Cards'}</button>
+    </div>`;
+  article.querySelector('.progress-deck-button').addEventListener('click', () => openProgressDashboard(deck, path, indexPath));
+  article.querySelector('.learn-deck-button').addEventListener('click', () => openLearnSetup(deck, path, indexPath));
+  article.querySelector('.test-deck-button').addEventListener('click', () => startOrResumeTest(deck, path, indexPath));
+  article.querySelector('.weak-deck-button').addEventListener('click', () => startWeakReview(deck, path, indexPath));
   $('deckList').appendChild(article);
 }
 
-function getTargetedReviewCards(kind) {
-  const progress = getProgress();
-  const now = Date.now();
-  const forgottenAfterDays = 30;
-
-  const candidates = state.deck.cards
-    .map((card) => ({
-      card,
-      record: progress.cards[card.id] || {}
-    }));
-
-  if (kind === 'weak') {
-    return candidates
-      .filter(({ record }) => {
-        const seen = Number(record.seen) || 0;
-        const score = Number(record.fieldReadiness) || 0;
-        return seen > 0 && score < 65;
-      })
-      .sort((a, b) => {
-        const scoreDifference =
-          (Number(a.record.fieldReadiness) || 0) -
-          (Number(b.record.fieldReadiness) || 0);
-
-        if (scoreDifference !== 0) {
-          return scoreDifference;
-        }
-
-        const aReviewed = Date.parse(a.record.lastReviewed || '') || 0;
-        const bReviewed = Date.parse(b.record.lastReviewed || '') || 0;
-        return aReviewed - bReviewed;
-      })
-      .map(({ card }) => card);
+function setDeck(deck, path, indexPath) {
+  if (deck && path) {
+    state.deck = deck; state.deckPath = path; state.deckIndexPath = indexPath || state.deckIndexPath;
+    FieldTrainerLearning.prepareDeck(deck); saveLastDeck(state.deckIndexPath);
   }
-
-  if (kind === 'forgotten') {
-    return candidates
-      .filter(({ record }) => {
-        const seen = Number(record.seen) || 0;
-        const reviewedAt = Date.parse(record.lastReviewed || '');
-
-        if (!seen || !Number.isFinite(reviewedAt)) {
-          return false;
-        }
-
-        return (now - reviewedAt) / 86400000 >= forgottenAfterDays;
-      })
-      .sort((a, b) => {
-        const aReviewed = Date.parse(a.record.lastReviewed || '') || 0;
-        const bReviewed = Date.parse(b.record.lastReviewed || '') || 0;
-        return aReviewed - bReviewed;
-      })
-      .map(({ card }) => card);
-  }
-
-  return [];
 }
-
-function openProgressDashboard(deck, path, indexPath) {
-  ensureDeck(deck, path, indexPath);
-  state.mode = 'progress';
-
-  const summary = getDeckReadiness(state.deck);
-  const weakCards = getTargetedReviewCards('weak');
-  const forgottenCards = getTargetedReviewCards('forgotten');
-
-  $('progressDeckName').textContent = state.deck.name;
-  $('progressReadinessScore').textContent = summary.reviewedCards ? summary.score : '—';
-  $('progressReadinessBand').textContent = summary.reviewedCards
-    ? summary.band
-    : 'No cards studied yet';
-  $('progressReadinessBar').style.width = `${summary.score}%`;
-  $('progressCardCount').textContent = summary.totalCards;
-  $('progressReviewCount').textContent = summary.totalSeen;
-  $('progressSessionCount').textContent = Number(summary.progress.sessions) || 0;
-  $('progressNeedsPractice').textContent = weakCards.length;
-  $('progressForgotten').textContent = forgottenCards.length;
-
-  const weakButton = $('progressWeakButton');
-  const forgottenButton = $('progressForgottenButton');
-
-  weakButton.disabled = weakCards.length === 0;
-  weakButton.textContent = weakCards.length
-    ? `Review weak cards (${weakCards.length})`
-    : 'No weak cards to review';
-  weakButton.title = weakCards.length
-    ? 'Review cards with Field Readiness below 65'
-    : 'Study some cards first, or keep practising until cards need attention';
-
-  forgottenButton.disabled = forgottenCards.length === 0;
-  forgottenButton.textContent = forgottenCards.length
-    ? `Review forgotten cards (${forgottenCards.length})`
-    : 'No forgotten cards yet';
-  forgottenButton.title = forgottenCards.length
-    ? 'Review cards not studied for at least 30 days'
-    : 'A card is considered forgotten after 30 days without review';
-
-  showView('progressView');
-}
-
-function startTargetedReview(kind) {
-  if (!state.deck) {
-    return;
-  }
-
-  const eligibleCards = getTargetedReviewCards(kind);
-
-  if (eligibleCards.length === 0) {
-    openProgressDashboard();
-    return;
-  }
-
-  FieldTrainerLearning.recordSessionStart(state.deck);
-
-  state.reviewCards = eligibleCards.slice(0, 20);
-  state.reviewIndex = 0;
-  state.targetedReviewKind = kind;
-  state.mode = 'test';
-  state.testType = kind;
-  state.current = null;
-  state.shown = 0;
-  state.sessionRight = 0;
-  state.sessionWrong = 0;
-  state.sessionSeen = new Set();
-  state.mistakeCards = [];
-
-  $('deckName').textContent = state.deck.name;
-  $('testHeading').textContent =
-    kind === 'weak'
-      ? 'Review weak cards'
-      : 'Review forgotten cards';
-
-  updateStats();
-  showReviewCard();
-  showView('studyView');
-}
+function ensureDeck(deck, path, indexPath) { if (deck && path) setDeck(deck, path, indexPath); }
 
 function saveLastDeck(indexPath) {
-  if (!state.deck || !indexPath) {
-    return;
-  }
-
-  const saved = {
-    id: state.deck.id,
-    name: state.deck.name,
-    indexPath,
-    updatedAt: new Date().toISOString()
-  };
-
-  localStorage.setItem(LAST_DECK_KEY, JSON.stringify(saved));
-  state.lastDeck = saved;
+  if (!state.deck || !indexPath) return;
+  const saved = { id: state.deck.id, name: state.deck.name, indexPath, updatedAt: new Date().toISOString() };
+  localStorage.setItem(LAST_DECK_KEY, JSON.stringify(saved)); state.lastDeck = saved;
 }
-
-function getLastDeck() {
-  try {
-    return JSON.parse(localStorage.getItem(LAST_DECK_KEY) || 'null');
-  } catch {
-    return null;
-  }
-}
-
-function getLastDeckItem() {
-  if (!state.lastDeck) {
-    return null;
-  }
-
-  return state.availableDecks.find(
-    (item) => item.deck.id === state.lastDeck.id
-  ) || null;
-}
-
+function getLastDeck() { try { return JSON.parse(localStorage.getItem(LAST_DECK_KEY) || 'null'); } catch { return null; } }
+function getLastDeckItem() { return state.availableDecks.find((item) => item.deck.id === state.lastDeck?.id) || null; }
 function renderContinuePanel() {
-  const item = getLastDeckItem();
-  const panel = $('continuePanel');
-
-  panel.classList.toggle('hidden', !item);
-
-  if (!item) {
-    return;
-  }
-
-  const summary = getDeckReadiness(item.deck);
-  const readiness = summary.reviewedCards
-    ? `${summary.score} Field Readiness`
-    : 'Not started yet';
-
-  $('continueDeckDetails').textContent =
-    `${item.deck.name} · ${item.deck.cards.length} cards · ${readiness}`;
+  const item = getLastDeckItem(); $('continuePanel').classList.toggle('hidden', !item); if (!item) return;
+  const summary = getDeckSummary(item.deck); const saved = loadTestSession(item.deck.id);
+  $('continueDeckDetails').textContent = `${item.deck.name} · ${item.deck.cards.length} cards · ${summary.score == null ? 'No Field Readiness yet' : `${summary.score} Field Readiness`}`;
+  $('continueReadButton').textContent = 'Learn';
+  $('continueTestButton').textContent = saved ? `Continue Test · ${saved.position}/${saved.queue.length}` : 'Test';
 }
+function continueLastDeck(mode) { const item = getLastDeckItem(); if (!item) return; mode === 'read' ? openLearnSetup(item.deck,item.path,item.indexPath) : startOrResumeTest(item.deck,item.path,item.indexPath); }
 
-function continueLastDeck(mode) {
-  const item = getLastDeckItem();
-
-  if (!item) {
-    return;
-  }
-
-  if (mode === 'read') {
-    startReadMode(item.deck, item.path, item.indexPath);
-  } else {
-    openTestSetup(item.deck, item.path, item.indexPath);
-  }
-}
-
-function getDeckById(deckId) {
-  return state.availableDecks.find((item) => item.deck.id === deckId)?.deck
-    || (state.deck?.id === deckId ? state.deck : null);
-}
-
-function getProgressFor(deckId) {
-  const deck = getDeckById(deckId);
-
-  return deck
-    ? FieldTrainerLearning.getDeckProgress(deck)
-    : { right: 0, wrong: 0, cards: {} };
-}
-
-function getProgress() {
-  return FieldTrainerLearning.getDeckProgress(state.deck);
-}
-
-function setDeck(deck, path, indexPath) {
-  state.deck = deck;
-  state.deckPath = path;
-  state.deckIndexPath = indexPath || state.deckIndexPath;
-  state.current = null;
-  state.shown = 0;
-  state.answerVisible = false;
-  state.readIndex = 0;
-  state.orderedIndex = 0;
-  state.sessionRight = 0;
-  state.sessionWrong = 0;
-  state.sessionSeen = new Set();
-  state.mistakeCards = [];
-  state.reviewCards = [];
-  state.reviewIndex = 0;
-  state.targetedReviewKind = null;
-  state.readFilter = '';
-  state.readCards = [...deck.cards];
-  state.readAnswerHidden = false;
-
-  FieldTrainerLearning.prepareDeck(state.deck);
-  saveLastDeck(state.deckIndexPath);
-}
-
-function ensureDeck(deck, path, indexPath) {
-  if (deck && path) {
-    setDeck(deck, path, indexPath);
-  }
-}
-
-function startReadMode(deck, path, indexPath) {
-  ensureDeck(deck, path, indexPath);
-
-  state.mode = 'read';
-  state.testType = null;
-  state.readIndex = 0;
-  state.readFilter = '';
-  state.readCards = [...state.deck.cards];
-  state.readAnswerHidden = false;
-
-  $('readDeckName').textContent = state.deck.name;
-  $('readSearchInput').value = '';
-  updateReadAnswerVisibility();
-
-  renderReadCard();
-  showView('readView');
-}
-
-function animateCard(elementId) {
-  const element = $(elementId);
-
-  element.classList.remove('card-enter');
-  void element.offsetWidth;
-  element.classList.add('card-enter');
-}
-
-function renderReadCard() {
-  const hasCards = state.readCards.length > 0;
-
-  $('readFlashcard').classList.toggle('hidden', !hasCards);
-  $('readNoResults').classList.toggle('hidden', hasCards);
-  $('previousReadButton').classList.toggle('hidden', !hasCards);
-  $('nextReadButton').classList.toggle('hidden', !hasCards);
-  $('readProgress').classList.toggle('hidden', !hasCards);
-  $('readProgressBar').parentElement.classList.toggle('hidden', !hasCards);
-
-  if (!hasCards) {
-    $('readSearchSummary').textContent =
-      `No results for “${state.readFilter}”`;
-    $('readSearchSummary').classList.remove('hidden');
-    return;
-  }
-
-  const card = state.readCards[state.readIndex];
-  const currentNumber = state.readIndex + 1;
-  const total = state.readCards.length;
-
-  $('readCardImage').src = `${state.deckPath}${card.image}`;
-  $('readCardImage').alt = `${card.answer} slide`;
-  $('readAnswerText').textContent = card.answer;
-  $('readProgress').textContent = `${currentNumber} of ${total}`;
-  $('readProgressBar').style.width = `${(currentNumber / total) * 100}%`;
-
-  $('previousReadButton').disabled = state.readIndex === 0;
-  $('nextReadButton').textContent =
-    state.readIndex === total - 1 ? 'Back to start ↻' : 'Next →';
-
-  const filtered = Boolean(state.readFilter);
-  $('readSearchSummary').classList.toggle('hidden', !filtered);
-  $('readSearchSummary').textContent = filtered
-    ? `${total} matching ${total === 1 ? 'species' : 'species'}`
-    : '';
-
-  animateCard('readFlashcard');
-}
-
-function moveReadCard(direction) {
-  if (direction < 0 && state.readIndex > 0) {
-    state.readIndex -= 1;
-  }
-
-  if (direction > 0) {
-    state.readIndex =
-      state.readIndex === state.readCards.length - 1
-        ? 0
-        : state.readIndex + 1;
-  }
-
-  renderReadCard();
-
-  window.scrollTo({
-    top: 0,
-    behavior: 'smooth'
-  });
-}
-
-function filterReadCards(query) {
-  state.readFilter = query.trim();
-  const normalized = state.readFilter.toLocaleLowerCase();
-
-  state.readCards = normalized
-    ? state.deck.cards.filter((card) =>
-        card.answer.toLocaleLowerCase().includes(normalized)
-      )
-    : [...state.deck.cards];
-
-  state.readIndex = 0;
-  renderReadCard();
-}
-
-function updateReadAnswerVisibility() {
-  $('readAnswerPanel').classList.toggle('answer-collapsed', state.readAnswerHidden);
-  $('toggleReadAnswerButton').textContent =
-    state.readAnswerHidden ? 'Show answer' : 'Hide answer';
-  $('toggleReadAnswerButton').setAttribute(
-    'aria-pressed',
-    String(state.readAnswerHidden)
-  );
-}
-
-function toggleReadAnswer() {
-  state.readAnswerHidden = !state.readAnswerHidden;
-  updateReadAnswerVisibility();
-}
-
-function openTestSetup(deck, path, indexPath) {
-  ensureDeck(deck, path, indexPath);
-
-  state.mode = 'test-setup';
-  state.testType = null;
-  state.current = null;
-  state.answerVisible = false;
-
+/* LEARN ---------------------------------------------------------------- */
+function openLearnSetup(deck, path, indexPath) {
+  ensureDeck(deck,path,indexPath); state.mode = 'test-setup';
   $('testSetupDeckName').textContent = state.deck.name;
-
+  $('testSetupTitle').textContent = 'Choose how to learn';
+  $('smartOptionEyebrow').textContent = 'STRUCTURED'; $('smartOptionTitle').textContent = 'In Order';
+  $('smartOptionText').textContent = 'Work through every card in its original slide order. Learning does not affect Field Readiness.';
+  $('startSmartButton').textContent = 'Learn In Order';
+  $('orderedOptionEyebrow').textContent = 'MIX IT UP'; $('orderedOptionTitle').textContent = 'Random';
+  $('orderedOptionText').textContent = 'Work through every card once in a shuffled order. Learning does not affect Field Readiness.';
+  $('startOrderedButton').textContent = 'Learn Random';
+  $('setupReadButton').classList.add('hidden');
   showView('testSetupView');
 }
 
-function startSmartTest() {
-  FieldTrainerLearning.recordSessionStart(state.deck);
-  state.mode = 'test';
-  state.testType = 'smart';
-  state.current = null;
-  state.shown = 0;
-  state.sessionRight = 0;
-  state.sessionWrong = 0;
-  state.sessionSeen = new Set();
-  state.mistakeCards = [];
-  state.reviewCards = [];
-  state.reviewIndex = 0;
-  state.targetedReviewKind = null;
-
-  $('deckName').textContent = state.deck.name;
-  $('testHeading').textContent = 'Smart Random';
-
-  updateStats();
-  chooseSmartCard();
-  showView('studyView');
+function startLearn(order) {
+  state.mode = 'read'; state.learnOrder = order; state.readIndex = 0; state.readFilter = '';
+  state.readCards = order === 'random' ? shuffle(state.deck.cards) : [...state.deck.cards];
+  state.readAnswerHidden = true;
+  $('readDeckName').textContent = state.deck.name;
+  $('readModeHeading').textContent = order === 'random' ? 'Learn · Random' : 'Learn · In Order';
+  $('readSearchInput').value = ''; updateReadAnswerVisibility(); renderReadCard(); showView('readView');
+}
+function animateCard(id) { const element=$(id); element.classList.remove('card-enter'); void element.offsetWidth; element.classList.add('card-enter'); }
+function renderReadCard() {
+  const hasCards = state.readCards.length > 0;
+  $('readFlashcard').classList.toggle('hidden', !hasCards); $('readNoResults').classList.toggle('hidden', hasCards);
+  $('previousReadButton').classList.toggle('hidden', !hasCards); $('nextReadButton').classList.toggle('hidden', !hasCards);
+  if (!hasCards) return;
+  const card=state.readCards[state.readIndex], current=state.readIndex+1, total=state.readCards.length;
+  $('readCardImage').src=`${state.deckPath}${card.image}`; $('readCardImage').alt='Learning card'; $('readAnswerText').textContent=card.answer;
+  $('readProgress').textContent=`${current} of ${total}`; $('readProgressBar').style.width=`${current/total*100}%`;
+  $('previousReadButton').disabled=state.readIndex===0; $('nextReadButton').textContent=state.readIndex===total-1?'Finish ↻':'Next →';
+  $('readSearchSummary').classList.toggle('hidden', !state.readFilter);
+  $('readSearchSummary').textContent=state.readFilter?`${total} matching cards`:''; animateCard('readFlashcard');
+}
+function moveReadCard(direction) {
+  if (direction<0 && state.readIndex>0) state.readIndex-=1;
+  if (direction>0) state.readIndex=state.readIndex===state.readCards.length-1?0:state.readIndex+1;
+  state.readAnswerHidden=true; updateReadAnswerVisibility(); renderReadCard(); window.scrollTo({top:0,behavior:'smooth'});
+}
+function filterReadCards(query) {
+  state.readFilter=query.trim(); const q=state.readFilter.toLocaleLowerCase();
+  const base=state.learnOrder==='random'?state.readCards:[...state.deck.cards];
+  state.readCards=q?state.deck.cards.filter((card)=>card.answer.toLocaleLowerCase().includes(q)): (state.learnOrder==='random'?shuffle(state.deck.cards):[...state.deck.cards]);
+  state.readIndex=0; renderReadCard();
+}
+function updateReadAnswerVisibility() {
+  $('readAnswerPanel').classList.toggle('hidden', state.readAnswerHidden);
+  $('toggleReadAnswerButton').classList.toggle('hidden', !state.readAnswerHidden);
+  $('toggleReadAnswerButton').textContent = 'Show answer';
 }
 
-function startOrderedTest() {
-  if (!state.deck) {
-    console.error('No deck selected');
-    showView('homeView');
-    return;
-  }
-
-  FieldTrainerLearning.recordSessionStart(state.deck);
-
-  state.mode = 'test';
-  state.testType = 'ordered';
-  state.current = null;
-  state.shown = 0;
-  state.orderedIndex = 0;
-  state.sessionRight = 0;
-  state.sessionWrong = 0;
-  state.sessionSeen = new Set();
-  state.mistakeCards = [];
-  state.reviewCards = [];
-  state.reviewIndex = 0;
-  state.targetedReviewKind = null;
-
-  $('deckName').textContent = state.deck.name;
-  $('testHeading').textContent = 'In Order';
-
-  updateStats();
-  showOrderedCard();
-  showView('studyView');
+function toggleReadAnswer() {
+  state.readAnswerHidden = false;
+  updateReadAnswerVisibility();
 }
 
-function cardWeight(card, progress) {
-  const result = progress.cards[card.id] || {
-    right: 0,
-    wrong: 0
-  };
-
-  return Math.max(
-    1,
-    1 + result.wrong * 2 - result.right * 0.35
-  );
+/* TEST ----------------------------------------------------------------- */
+function testSessionKey(deckId){return `${TEST_SESSION_PREFIX}${deckId}`;}
+function loadTestSession(deckId){try{return JSON.parse(localStorage.getItem(testSessionKey(deckId))||'null');}catch{return null;}}
+function saveTestSession(){
+  if(!state.deck||state.mode!=='test'||state.testType!=='multiple-choice')return;
+  localStorage.setItem(testSessionKey(state.deck.id),JSON.stringify({queue:state.testQueue.map(c=>c.id),position:state.testPosition,results:state.testResults,updatedAt:new Date().toISOString()}));
+}
+function clearTestSession(){if(state.deck)localStorage.removeItem(testSessionKey(state.deck.id));}
+function startOrResumeTest(deck,path,indexPath){
+  ensureDeck(deck,path,indexPath); const saved=loadTestSession(state.deck.id);
+  if(saved&&Array.isArray(saved.queue)&&saved.position<saved.queue.length){resumeTest(saved);return;}
+  startNewTest();
+}
+function startNewTest(){
+  FieldTrainerLearning.recordSessionStart(state.deck); state.mode='test'; state.testType='multiple-choice';
+  state.testQueue=shuffle(state.deck.cards); state.testPosition=0; state.testResults=[]; saveTestSession(); showTestCard(); showView('studyView');
+}
+function resumeTest(saved){
+  state.mode='test'; state.testType='multiple-choice';
+  const byId=new Map(state.deck.cards.map(c=>[c.id,c])); state.testQueue=saved.queue.map(id=>byId.get(id)).filter(Boolean);
+  state.testPosition=Math.min(Number(saved.position)||0,state.testQueue.length-1); state.testResults=Array.isArray(saved.results)?saved.results:[];
+  showTestCard(); showView('studyView');
+}
+function buildChoices(card){
+  const unique=[...new Set(state.deck.cards.map(c=>c.answer))].filter(answer=>answer!==card.answer);
+  return shuffle([card.answer,...shuffle(unique).slice(0,3)]);
+}
+function showTestCard(){
+  const card=state.testQueue[state.testPosition]; if(!card){finishTest();return;} state.current=card;
+  $('deckName').textContent=state.deck.name; $('testHeading').textContent='Test';
+  $('cardImage').src=`${state.deckPath}${card.image}`; $('cardImage').alt='Multiple-choice test card';
+  $('answerPanel').classList.add('hidden'); $('revealControls').classList.add('hidden'); $('ratingControls').classList.add('hidden');
+  $('multipleChoiceControls').classList.remove('hidden'); $('testStats').classList.add('hidden');
+  const choices=buildChoices(card); const container=$('multipleChoiceControls'); container.replaceChildren();
+  choices.forEach((answer)=>{const button=document.createElement('button');button.className='choice-button secondary';button.textContent=answer;button.addEventListener('click',()=>answerChoice(answer));container.appendChild(button);});
+  $('progressText').textContent=`Question ${state.testPosition+1} of ${state.testQueue.length}`;
+  $('testProgressBar').style.width=`${state.testPosition/state.testQueue.length*100}%`; animateCard('testFlashcard');
+}
+function answerChoice(answer){
+  const correct=answer===state.current.answer; state.testResults.push({cardId:state.current.id,correct}); state.testPosition+=1; saveTestSession();
+  if(state.testPosition>=state.testQueue.length)finishTest();else showTestCard();
+}
+function finishTest(){
+  const result=FieldTrainerLearning.recordCompletedTest(state.deck,state.testResults); clearTestSession();
+  const right=state.testResults.filter(r=>r.correct).length, total=state.testResults.length, wrong=total-right;
+  showResults('test',right,wrong,`Field Readiness is now ${result.fieldReadiness}.`);
+}
+function restartTest(){
+  if(loadTestSession(state.deck.id)&&!confirm('Restart this Test? Your unfinished Test progress will be discarded.'))return;
+  clearTestSession();startNewTest();
 }
 
-function chooseSmartCard() {
-  const progress = getProgress();
-
-  let pool = state.deck.cards.filter(
-    (card) => !state.current || card.id !== state.current.id
-  );
-
-  if (pool.length === 0) {
-    pool = state.deck.cards;
-  }
-
-  const weights = pool.map(
-    (card) => cardWeight(card, progress)
-  );
-
-  let pick =
-    Math.random() *
-    weights.reduce((sum, weight) => sum + weight, 0);
-
-  let chosen = pool[0];
-
-  for (let i = 0; i < pool.length; i += 1) {
-    pick -= weights[i];
-
-    if (pick <= 0) {
-      chosen = pool[i];
-      break;
-    }
-  }
-
-  displayTestCard(chosen);
+/* REVIEW WEAK ---------------------------------------------------------- */
+function getWeakCards(){const ids=new Set(FieldTrainerLearning.getWeakCardIds(state.deck));return state.deck.cards.filter(c=>ids.has(c.id));}
+function startWeakReview(deck,path,indexPath){
+  ensureDeck(deck,path,indexPath); const weak=getWeakCards(); if(!weak.length){openProgressDashboard();return;}
+  FieldTrainerLearning.recordSessionStart(state.deck); state.mode='test';state.testType='weak';state.reviewQueue=shuffle(weak);state.reviewRight=0;state.reviewWrong=0;showWeakCard();showView('studyView');
+}
+function showWeakCard(){
+  if(!state.reviewQueue.length){showResults('weak',state.reviewRight,state.reviewWrong,'Every weak card was answered correctly at least once in this review.');return;}
+  state.current=state.reviewQueue[0]; $('deckName').textContent=state.deck.name;$('testHeading').textContent='Review Weak Cards';
+  $('cardImage').src=`${state.deckPath}${state.current.image}`;$('answerText').textContent=state.current.answer;
+  $('answerPanel').classList.add('hidden');$('revealControls').classList.remove('hidden');$('ratingControls').classList.add('hidden');$('multipleChoiceControls').classList.add('hidden');$('testStats').classList.remove('hidden');
+  $('rightCount').textContent=state.reviewRight;$('wrongCount').textContent=state.reviewWrong;const total=state.reviewRight+state.reviewWrong;$('accuracy').textContent=total?`${Math.round(state.reviewRight/total*100)}%`:'—';
+  $('progressText').textContent=`${state.reviewQueue.length} weak ${state.reviewQueue.length===1?'card':'cards'} remaining`;$('testProgressBar').style.width='0%';animateCard('testFlashcard');
+}
+function reveal(){if(state.testType!=='weak')return;$('answerPanel').classList.remove('hidden');$('revealControls').classList.add('hidden');$('ratingControls').classList.remove('hidden');}
+function rateWeak(isRight){
+  if(state.testType!=='weak'||$('answerPanel').classList.contains('hidden'))return;
+  const card=state.reviewQueue.shift();
+  if(isRight)state.reviewRight+=1;else{state.reviewWrong+=1;state.reviewQueue.push(card);}
+  showWeakCard();
 }
 
-function showOrderedCard() {
-  const card = state.deck.cards[state.orderedIndex];
-  displayTestCard(card);
+/* PROGRESS ------------------------------------------------------------- */
+function openProgressDashboard(deck,path,indexPath){
+  ensureDeck(deck,path,indexPath);state.mode='progress';const summary=getDeckSummary(state.deck);const score=summary.score;
+  $('progressDeckName').textContent=state.deck.name;$('progressReadinessScore').textContent=score==null?'—':score;
+  $('progressReadinessBand').textContent=score==null?'Complete a Test to set Field Readiness':summary.band;$('progressReadinessBar').style.width=`${score||0}%`;
+  $('progressCardCount').textContent=summary.totalCards;$('progressReviewCount').textContent=summary.progress.totalTestAnswers;
+  $('progressSessionCount').textContent=summary.progress.completedTests;$('progressNeedsPractice').textContent=summary.weak;
+  $('progressForgottenMetric').classList.add('hidden');
+  $('progressContinueButton').textContent=loadTestSession(state.deck.id)?`Continue Test · ${loadTestSession(state.deck.id).position}/${loadTestSession(state.deck.id).queue.length}`:'Start Test';
+  $('progressWeakButton').disabled=summary.weak===0;$('progressWeakButton').textContent=summary.weak?`Review Weak Cards (${summary.weak})`:'No Weak Cards';
+  $('progressForgottenButton').classList.add('hidden');$('progressActionNote').textContent='Only completed Tests affect Field Readiness. Learn and Review are practice only.';
+  showView('progressView');
 }
 
-function startMistakeReview() {
-  if (state.mistakeCards.length === 0) {
-    return;
-  }
-
-  FieldTrainerLearning.recordSessionStart(state.deck);
-
-  state.reviewCards = [...state.mistakeCards];
-  state.mistakeCards = [];
-  state.reviewIndex = 0;
-  state.targetedReviewKind = null;
-  state.mode = 'test';
-  state.testType = 'review';
-  state.current = null;
-  state.shown = 0;
-  state.sessionRight = 0;
-  state.sessionWrong = 0;
-  state.sessionSeen = new Set();
-
-  $('deckName').textContent = state.deck.name;
-  $('testHeading').textContent = 'Review mistakes';
-
-  updateStats();
-  showReviewCard();
-  showView('studyView');
-}
-
-function showReviewCard() {
-  const card = state.reviewCards[state.reviewIndex];
-  displayTestCard(card);
-}
-
-function displayTestCard(card) {
-  state.current = card;
-  state.shown += 1;
-  state.sessionSeen.add(card.id);
-  state.answerVisible = false;
-
-  $('cardImage').src = `${state.deckPath}${card.image}`;
-  $('cardImage').alt = 'Flashcard question slide';
-  $('answerText').textContent = card.answer;
-
-  $('answerPanel').classList.add('hidden');
-  $('ratingControls').classList.add('hidden');
-  $('revealControls').classList.remove('hidden');
-
-  updateSessionProgress();
-  animateCard('testFlashcard');
-}
-
-function updateSessionProgress() {
-  const total = state.deck.cards.length;
-
-  if (state.testType === 'ordered') {
-    const currentNumber = state.orderedIndex + 1;
-
-    $('progressText').textContent =
-      `Card ${currentNumber} of ${total}`;
-
-    $('testProgressBar').style.width =
-      `${(currentNumber / total) * 100}%`;
-
-    return;
-  }
-
-  if (['review', 'weak', 'forgotten'].includes(state.testType)) {
-    const reviewTotal = state.reviewCards.length;
-    const currentNumber = state.reviewIndex + 1;
-    const label =
-      state.testType === 'review'
-        ? 'Mistake'
-        : state.testType === 'weak'
-          ? 'Weak card'
-          : 'Forgotten card';
-
-    $('progressText').textContent =
-      `${label} ${currentNumber} of ${reviewTotal}`;
-
-    $('testProgressBar').style.width =
-      `${(currentNumber / reviewTotal) * 100}%`;
-
-    return;
-  }
-
-  const seen = state.sessionSeen.size;
-
-  $('progressText').textContent =
-    `${seen} of ${total} cards seen · ${state.shown} shown`;
-
-  $('testProgressBar').style.width =
-    `${Math.min(100, (seen / total) * 100)}%`;
-}
-
-function reveal() {
-  if (state.mode !== 'test') {
-    return;
-  }
-
-  state.answerVisible = true;
-
-  $('answerPanel').classList.remove('hidden');
-  $('revealControls').classList.add('hidden');
-  $('ratingControls').classList.remove('hidden');
-}
-
-function rate(isRight) {
-  if (state.mode !== 'test' || !state.answerVisible) {
-    return;
-  }
-
-  recordAnswer(isRight);
-
-  if (state.testType === 'ordered') {
-    moveToNextOrderedCard();
-    return;
-  }
-
-  if (['review', 'weak', 'forgotten'].includes(state.testType)) {
-    moveToNextReviewCard();
-    return;
-  }
-
-  if (state.sessionSeen.size >= state.deck.cards.length) {
-    showResults();
-    return;
-  }
-
-  chooseSmartCard();
-}
-
-function recordAnswer(isRight) {
-  FieldTrainerLearning.recordAnswer(
-    state.deck,
-    state.current.id,
-    isRight
-  );
-
-  if (isRight) {
-    state.sessionRight += 1;
-  } else {
-    state.sessionWrong += 1;
-
-    const alreadyRecorded = state.mistakeCards.some(
-      (card) => card.id === state.current.id
-    );
-
-    if (!alreadyRecorded) {
-      state.mistakeCards.push(state.current);
-    }
-  }
-
-  updateStats();
-}
-
-function moveToNextOrderedCard() {
-  const isFinalCard =
-    state.orderedIndex >= state.deck.cards.length - 1;
-
-  if (isFinalCard) {
-    showResults();
-    return;
-  }
-
-  state.orderedIndex += 1;
-  showOrderedCard();
-}
-
-function moveToNextReviewCard() {
-  const isFinalCard =
-    state.reviewIndex >= state.reviewCards.length - 1;
-
-  if (isFinalCard) {
-    showResults();
-    return;
-  }
-
-  state.reviewIndex += 1;
-  showReviewCard();
-}
-
-function showResults() {
-  const completedTestType = state.testType;
-  state.mode = 'results';
-
-  const total =
-    state.sessionRight + state.sessionWrong;
-
-  const accuracy = total
-    ? Math.round((state.sessionRight / total) * 100)
-    : 0;
-
-  const resultCopy = {
-    review: {
-      title: 'Review complete',
-      message: 'You have reviewed every card from your previous mistakes.'
-    },
-    weak: {
-      title: 'Weak card review complete',
-      message: 'You have completed this weak-card review session.'
-    },
-    forgotten: {
-      title: 'Forgotten card review complete',
-      message: 'You have completed this forgotten-card review session.'
-    }
-  };
-
-  const copy = resultCopy[completedTestType] || {
-    title: 'Test complete',
-    message: 'You have completed this test session.'
-  };
-
-  $('resultsDeckName').textContent = state.deck.name;
-  $('resultsTitle').textContent = copy.title;
-  $('resultsMessage').textContent = copy.message;
-  $('resultsAccuracy').textContent = `${accuracy}%`;
-  $('resultsRight').textContent = state.sessionRight;
-  $('resultsWrong').textContent = state.sessionWrong;
-  $('resultsTotal').textContent = total;
-
-  $('reviewMistakesButton').classList.toggle(
-    'hidden',
-    state.mistakeCards.length === 0
-  );
-
-  $('restartOrderedButton').classList.toggle(
-    'hidden',
-    completedTestType !== 'ordered'
-  );
-
+function showResults(type,right,wrong,message){
+  state.mode='results';const total=right+wrong,accuracy=total?Math.round(right/total*100):0;
+  $('resultsDeckName').textContent=state.deck.name;$('resultsTitle').textContent=type==='test'?'Test complete':'Weak card review complete';
+  $('resultsMessage').textContent=message;$('resultsAccuracy').textContent=`${accuracy}%`;$('resultsRight').textContent=right;$('resultsWrong').textContent=wrong;$('resultsTotal').textContent=total;
+  $('reviewMistakesButton').classList.add('hidden');$('restartOrderedButton').classList.add('hidden');$('resultsSmartButton').textContent=type==='test'?'Test Again':'Start Test';
   showView('resultsView');
 }
 
-function updateStats() {
-  const progress = getProgress();
-  const total = progress.right + progress.wrong;
-
-  $('rightCount').textContent = progress.right;
-  $('wrongCount').textContent = progress.wrong;
-
-  $('accuracy').textContent = total
-    ? `${Math.round((progress.right / total) * 100)}%`
-    : '—';
-}
-
-function resetProgress() {
-  const confirmed = confirm(
-    `Reset all saved results for ${state.deck.name}?`
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  FieldTrainerLearning.resetDeck(state.deck.id);
-  FieldTrainerLearning.prepareDeck(state.deck);
-
-  updateStats();
-
-  state.sessionRight = 0;
-  state.sessionWrong = 0;
-  state.sessionSeen = new Set();
-  state.shown = 0;
-
-  state.mistakeCards = [];
-
-  if (state.testType === 'ordered') {
-    state.orderedIndex = 0;
-    showOrderedCard();
-    return;
-  }
-
-  if (['review', 'weak', 'forgotten'].includes(state.testType)) {
-    state.reviewIndex = 0;
-    showReviewCard();
-    return;
-  }
-
-  state.current = null;
-  chooseSmartCard();
-}
-
-function goHome() {
-  state.deck = null;
-  state.deckPath = null;
-  state.mode = null;
-  state.testType = null;
-
-  showView('homeView');
-  loadDeckIndex().catch(showLoadError);
-}
-
-function goBack() {
-  if (state.mode === 'test') {
-    openTestSetup();
-    return;
-  }
-
-  if (state.mode === 'results') {
-    openTestSetup();
-    return;
-  }
-
-  goHome();
-}
-
-
-function openImageZoom(sourceImage) {
-  const zoomImage = $('zoomImage');
-
-  zoomImage.src = sourceImage.src;
-  zoomImage.alt = sourceImage.alt || 'Zoomed flashcard image';
-
-  state.zoomScale = 1;
-  state.zoomX = 0;
-  state.zoomY = 0;
-  state.zoomDragging = false;
-  state.zoomPointers.clear();
-  state.zoomPinchDistance = 0;
-  state.zoomPinchScale = 1;
-
-  updateZoomTransform();
-
-  $('imageZoom').classList.remove('hidden');
-  document.body.classList.add('zoom-open');
-  $('closeZoomButton').focus();
-}
-
-function closeImageZoom() {
-  $('imageZoom').classList.add('hidden');
-  document.body.classList.remove('zoom-open');
-  state.zoomPointers.clear();
-  state.zoomDragging = false;
-}
-
-function getZoomBounds(scale = state.zoomScale) {
-  const stage = $('zoomStage');
-  const image = $('zoomImage');
-  const stageRect = stage.getBoundingClientRect();
-
-  const naturalRatio =
-    image.naturalWidth && image.naturalHeight
-      ? image.naturalWidth / image.naturalHeight
-      : 1;
-
-  let baseWidth = stageRect.width * 0.92;
-  let baseHeight = baseWidth / naturalRatio;
-
-  if (baseHeight > stageRect.height * 0.92) {
-    baseHeight = stageRect.height * 0.92;
-    baseWidth = baseHeight * naturalRatio;
-  }
-
-  const scaledWidth = baseWidth * scale;
-  const scaledHeight = baseHeight * scale;
-
-  return {
-    x: Math.max(0, (scaledWidth - stageRect.width) / 2),
-    y: Math.max(0, (scaledHeight - stageRect.height) / 2)
-  };
-}
-
-function clampZoomPosition() {
-  if (state.zoomScale <= 1) {
-    state.zoomX = 0;
-    state.zoomY = 0;
-    return;
-  }
-
-  const bounds = getZoomBounds();
-
-  state.zoomX = Math.min(bounds.x, Math.max(-bounds.x, state.zoomX));
-  state.zoomY = Math.min(bounds.y, Math.max(-bounds.y, state.zoomY));
-}
-
-function updateZoomTransform() {
-  clampZoomPosition();
-
-  $('zoomImage').style.transform =
-    `translate3d(${state.zoomX}px, ${state.zoomY}px, 0) scale(${state.zoomScale})`;
-
-  $('zoomPercent').textContent = `${Math.round(state.zoomScale * 100)}%`;
-  $('zoomStage').classList.toggle('can-pan', state.zoomScale > 1);
-}
-
-function setZoom(newScale, clientX, clientY) {
-  const oldScale = state.zoomScale;
-  const nextScale = Math.min(5, Math.max(1, newScale));
-
-  if (nextScale === oldScale) {
-    return;
-  }
-
-  const rect = $('zoomStage').getBoundingClientRect();
-  const focusX = clientX ?? rect.left + rect.width / 2;
-  const focusY = clientY ?? rect.top + rect.height / 2;
-  const localX = focusX - rect.left - rect.width / 2;
-  const localY = focusY - rect.top - rect.height / 2;
-  const ratio = nextScale / oldScale;
-
-  state.zoomX = localX - (localX - state.zoomX) * ratio;
-  state.zoomY = localY - (localY - state.zoomY) * ratio;
-  state.zoomScale = nextScale;
-
-  updateZoomTransform();
-}
-
-function changeZoom(delta, clientX, clientY) {
-  setZoom(state.zoomScale + delta, clientX, clientY);
-}
-
-function resetImageZoom() {
-  state.zoomScale = 1;
-  state.zoomX = 0;
-  state.zoomY = 0;
-  updateZoomTransform();
-}
-
-function pointerDistance(points) {
-  const [a, b] = points;
-
-  return Math.hypot(
-    b.clientX - a.clientX,
-    b.clientY - a.clientY
-  );
-}
-
-function pointerMidpoint(points) {
-  const [a, b] = points;
-
-  return {
-    x: (a.clientX + b.clientX) / 2,
-    y: (a.clientY + b.clientY) / 2
-  };
-}
-
-function startZoomPointer(event) {
-  state.zoomPointers.set(event.pointerId, event);
-
-  const stage = $('zoomStage');
-
-  if (state.zoomPointers.size === 2) {
-    const points = [...state.zoomPointers.values()];
-    state.zoomPinchDistance = pointerDistance(points);
-    state.zoomPinchScale = state.zoomScale;
-    state.zoomDragging = false;
-    stage.classList.remove('dragging');
-    return;
-  }
-
-  if (state.zoomScale > 1) {
-    state.zoomDragging = true;
-    state.zoomPointerX = event.clientX;
-    state.zoomPointerY = event.clientY;
-    stage.classList.add('dragging');
-  }
-
-  stage.setPointerCapture(event.pointerId);
-}
-
-function moveZoomPointer(event) {
-  if (!state.zoomPointers.has(event.pointerId)) {
-    return;
-  }
-
-  state.zoomPointers.set(event.pointerId, event);
-
-  if (state.zoomPointers.size === 2) {
-    const points = [...state.zoomPointers.values()];
-    const distance = pointerDistance(points);
-    const midpoint = pointerMidpoint(points);
-
-    if (state.zoomPinchDistance > 0) {
-      const scale = state.zoomPinchScale * (distance / state.zoomPinchDistance);
-      setZoom(scale, midpoint.x, midpoint.y);
-    }
-
-    return;
-  }
-
-  if (!state.zoomDragging) {
-    return;
-  }
-
-  state.zoomX += event.clientX - state.zoomPointerX;
-  state.zoomY += event.clientY - state.zoomPointerY;
-  state.zoomPointerX = event.clientX;
-  state.zoomPointerY = event.clientY;
-
-  updateZoomTransform();
-}
-
-function endZoomPointer(event) {
-  state.zoomPointers.delete(event.pointerId);
-
-  if ($('zoomStage').hasPointerCapture(event.pointerId)) {
-    $('zoomStage').releasePointerCapture(event.pointerId);
-  }
-
-  if (state.zoomPointers.size < 2) {
-    state.zoomPinchDistance = 0;
-  }
-
-  if (state.zoomPointers.size === 1 && state.zoomScale > 1) {
-    const remaining = [...state.zoomPointers.values()][0];
-    state.zoomDragging = true;
-    state.zoomPointerX = remaining.clientX;
-    state.zoomPointerY = remaining.clientY;
-  } else {
-    state.zoomDragging = false;
-    $('zoomStage').classList.remove('dragging');
-  }
-
-  updateZoomTransform();
-}
-
-function handleZoomDoubleAction(event) {
-  event.preventDefault();
-
-  if (state.zoomScale > 1) {
-    resetImageZoom();
-  } else {
-    setZoom(2, event.clientX, event.clientY);
-  }
-}
-
-function handleZoomTap(event) {
-  if (event.pointerType !== 'touch') {
-    return;
-  }
-
-  const now = Date.now();
-
-  if (now - state.zoomLastTap < 320) {
-    handleZoomDoubleAction(event);
-    state.zoomLastTap = 0;
-  } else {
-    state.zoomLastTap = now;
-  }
-}
-
-function showLoadError(error) {
-  $('deckList').innerHTML = `
-    <div class="card hero">
-      <strong>App could not load.</strong>
-      <p>
-        ${escapeHtml(error.message)}
-        Run it through the included start-app.bat file.
-      </p>
-    </div>
-  `;
-}
-
-function escapeHtml(value) {
-  return String(value).replace(
-    /[&<>'"]/g,
-    (character) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      "'": '&#39;',
-      '"': '&quot;'
-    })[character]
-  );
-}
-
-
-$('progressContinueButton').addEventListener('click', startSmartTest);
-$('progressWeakButton').addEventListener('click', () => startTargetedReview('weak'));
-$('progressForgottenButton').addEventListener('click', () => startTargetedReview('forgotten'));
-
-$('continueReadButton').addEventListener(
-  'click',
-  () => continueLastDeck('read')
-);
-
-$('continueTestButton').addEventListener(
-  'click',
-  () => continueLastDeck('test')
-);
-
-$('readSearchInput').addEventListener('input', (event) => {
-  filterReadCards(event.target.value);
-});
-
-$('clearReadSearchButton').addEventListener('click', () => {
-  $('readSearchInput').value = '';
-  filterReadCards('');
-  $('readSearchInput').focus();
-});
-
-$('toggleReadAnswerButton').addEventListener(
-  'click',
-  toggleReadAnswer
-);
-
-$('switchToTestButton').addEventListener(
-  'click',
-  () => openTestSetup()
-);
-
-$('setupReadButton').addEventListener(
-  'click',
-  () => startReadMode()
-);
-
-$('startSmartButton').addEventListener(
-  'click',
-  startSmartTest
-);
-
-$('startOrderedButton').addEventListener(
-  'click',
-  startOrderedTest
-);
-
-$('changeTestButton').addEventListener(
-  'click',
-  () => openTestSetup()
-);
-
-$('previousReadButton').addEventListener(
-  'click',
-  () => moveReadCard(-1)
-);
-
-$('nextReadButton').addEventListener(
-  'click',
-  () => moveReadCard(1)
-);
-
-$('revealButton').addEventListener(
-  'click',
-  reveal
-);
-
-$('rightButton').addEventListener(
-  'click',
-  () => rate(true)
-);
-
-$('wrongButton').addEventListener(
-  'click',
-  () => rate(false)
-);
-
-$('resetButton').addEventListener(
-  'click',
-  resetProgress
-);
-
-$('reviewMistakesButton').addEventListener(
-  'click',
-  startMistakeReview
-);
-
-$('restartOrderedButton').addEventListener(
-  'click',
-  startOrderedTest
-);
-
-$('resultsSmartButton').addEventListener(
-  'click',
-  startSmartTest
-);
-
-$('resultsHomeButton').addEventListener(
-  'click',
-  goHome
-);
-
-$('homeButton').addEventListener(
-  'click',
-  goHome
-);
-
-$('backButton').addEventListener(
-  'click',
-  goBack
-);
-
-for (const imageId of ['readCardImage', 'cardImage']) {
-  $(imageId).addEventListener(
-    'click',
-    (event) => openImageZoom(event.currentTarget)
-  );
-}
-
-$('closeZoomButton').addEventListener(
-  'click',
-  closeImageZoom
-);
-
-$('zoomInButton').addEventListener(
-  'click',
-  () => changeZoom(0.5)
-);
-
-$('zoomOutButton').addEventListener(
-  'click',
-  () => changeZoom(-0.5)
-);
-
-$('resetZoomButton').addEventListener(
-  'click',
-  resetImageZoom
-);
-
-$('imageZoom').addEventListener('click', (event) => {
-  if (event.target === $('imageZoom')) {
-    closeImageZoom();
-  }
-});
-
-$('zoomStage').addEventListener('wheel', (event) => {
-  event.preventDefault();
-  changeZoom(event.deltaY < 0 ? 0.35 : -0.35, event.clientX, event.clientY);
-}, { passive: false });
-
-$('zoomStage').addEventListener('dblclick', handleZoomDoubleAction);
-$('zoomStage').addEventListener('pointerdown', startZoomPointer);
-$('zoomStage').addEventListener('pointermove', moveZoomPointer);
-$('zoomStage').addEventListener('pointerup', (event) => {
-  handleZoomTap(event);
-  endZoomPointer(event);
-});
-$('zoomStage').addEventListener('pointercancel', endZoomPointer);
-window.addEventListener('resize', updateZoomTransform);
-
-document.addEventListener('keydown', (event) => {
-  if (
-    event.code === 'Escape' &&
-    !$('imageZoom').classList.contains('hidden')
-  ) {
-    closeImageZoom();
-    return;
-  }
-
-  if (!$('imageZoom').classList.contains('hidden')) {
-    if (event.code === 'Equal' || event.code === 'NumpadAdd') {
-      changeZoom(0.5);
-    }
-
-    if (event.code === 'Minus' || event.code === 'NumpadSubtract') {
-      changeZoom(-0.5);
-    }
-
-    if (event.code === 'Digit0' || event.code === 'Numpad0') {
-      resetImageZoom();
-    }
-
-    return;
-  }
-
-  if (state.mode === 'read') {
-    if (document.activeElement === $('readSearchInput')) {
-      if (event.code === 'Escape') {
-        $('readSearchInput').value = '';
-        filterReadCards('');
-        $('readSearchInput').blur();
-      }
-      return;
-    }
-
-    if (event.code === 'ArrowLeft') {
-      moveReadCard(-1);
-    }
-
-    if (event.code === 'ArrowRight') {
-      moveReadCard(1);
-    }
-
-    return;
-  }
-
-  if (state.mode !== 'test') {
-    return;
-  }
-
-  if (
-    event.code === 'Space' &&
-    !state.answerVisible
-  ) {
-    event.preventDefault();
-    reveal();
-  }
-
-  if (
-    event.code === 'ArrowLeft' &&
-    state.answerVisible
-  ) {
-    rate(false);
-  }
-
-  if (
-    event.code === 'ArrowRight' &&
-    state.answerVisible
-  ) {
-    rate(true);
-  }
-});
+function resetProgress(){if(!confirm(`Reset all saved results for ${state.deck.name}?`))return;FieldTrainerLearning.resetDeck(state.deck.id);FieldTrainerLearning.prepareDeck(state.deck);goHome();}
+function goHome(){state.mode=null;state.deck=null;state.deckPath=null;showView('homeView');loadDeckIndex().catch(showLoadError);}
+function goBack(){if(state.mode==='test'&&state.testType==='multiple-choice'){saveTestSession();goHome();return;}if(state.mode==='read'||state.mode==='progress'||state.mode==='results'||state.mode==='test')goHome();else goHome();}
+
+/* IMAGE ZOOM ----------------------------------------------------------- */
+function openImageZoom(sourceImage){const z=$('zoomImage');z.src=sourceImage.src;z.alt=sourceImage.alt||'Zoomed flashcard image';state.zoomScale=1;state.zoomX=0;state.zoomY=0;state.zoomDragging=false;state.zoomPointers.clear();state.zoomPinchDistance=0;state.zoomPinchScale=1;updateZoomTransform();$('imageZoom').classList.remove('hidden');document.body.classList.add('zoom-open');$('closeZoomButton').focus();}
+function closeImageZoom(){$('imageZoom').classList.add('hidden');document.body.classList.remove('zoom-open');state.zoomPointers.clear();state.zoomDragging=false;}
+function getZoomBounds(scale=state.zoomScale){const s=$('zoomStage'),i=$('zoomImage'),r=s.getBoundingClientRect(),ratio=i.naturalWidth&&i.naturalHeight?i.naturalWidth/i.naturalHeight:1;let w=r.width*.92,h=w/ratio;if(h>r.height*.92){h=r.height*.92;w=h*ratio;}return{x:Math.max(0,(w*scale-r.width)/2),y:Math.max(0,(h*scale-r.height)/2)};}
+function clampZoomPosition(){if(state.zoomScale<=1){state.zoomX=0;state.zoomY=0;return;}const b=getZoomBounds();state.zoomX=Math.min(b.x,Math.max(-b.x,state.zoomX));state.zoomY=Math.min(b.y,Math.max(-b.y,state.zoomY));}
+function updateZoomTransform(){clampZoomPosition();$('zoomImage').style.transform=`translate3d(${state.zoomX}px,${state.zoomY}px,0) scale(${state.zoomScale})`;$('zoomPercent').textContent=`${Math.round(state.zoomScale*100)}%`;$('zoomStage').classList.toggle('can-pan',state.zoomScale>1);}
+function setZoom(newScale,clientX,clientY){const old=state.zoomScale,next=Math.min(5,Math.max(1,newScale));if(next===old)return;const r=$('zoomStage').getBoundingClientRect(),fx=clientX??r.left+r.width/2,fy=clientY??r.top+r.height/2,lx=fx-r.left-r.width/2,ly=fy-r.top-r.height/2,ratio=next/old;state.zoomX=lx-(lx-state.zoomX)*ratio;state.zoomY=ly-(ly-state.zoomY)*ratio;state.zoomScale=next;updateZoomTransform();}
+function changeZoom(delta,x,y){setZoom(state.zoomScale+delta,x,y);}function resetImageZoom(){state.zoomScale=1;state.zoomX=0;state.zoomY=0;updateZoomTransform();}
+function pointerDistance(p){return Math.hypot(p[1].clientX-p[0].clientX,p[1].clientY-p[0].clientY);}function pointerMidpoint(p){return{x:(p[0].clientX+p[1].clientX)/2,y:(p[0].clientY+p[1].clientY)/2};}
+function startZoomPointer(e){state.zoomPointers.set(e.pointerId,e);const s=$('zoomStage');if(state.zoomPointers.size===2){const p=[...state.zoomPointers.values()];state.zoomPinchDistance=pointerDistance(p);state.zoomPinchScale=state.zoomScale;state.zoomDragging=false;return;}if(state.zoomScale>1){state.zoomDragging=true;state.zoomPointerX=e.clientX;state.zoomPointerY=e.clientY;}s.setPointerCapture(e.pointerId);}
+function moveZoomPointer(e){if(!state.zoomPointers.has(e.pointerId))return;state.zoomPointers.set(e.pointerId,e);if(state.zoomPointers.size===2){const p=[...state.zoomPointers.values()],d=pointerDistance(p),m=pointerMidpoint(p);if(state.zoomPinchDistance>0)setZoom(state.zoomPinchScale*(d/state.zoomPinchDistance),m.x,m.y);return;}if(!state.zoomDragging)return;state.zoomX+=e.clientX-state.zoomPointerX;state.zoomY+=e.clientY-state.zoomPointerY;state.zoomPointerX=e.clientX;state.zoomPointerY=e.clientY;updateZoomTransform();}
+function endZoomPointer(e){state.zoomPointers.delete(e.pointerId);state.zoomDragging=false;updateZoomTransform();}
+function handleZoomDoubleAction(e){e.preventDefault();state.zoomScale>1?resetImageZoom():setZoom(2,e.clientX,e.clientY);}
+function handleZoomTap(e){if(e.pointerType!=='touch')return;const n=Date.now();if(n-state.zoomLastTap<320){handleZoomDoubleAction(e);state.zoomLastTap=0;}else state.zoomLastTap=n;}
+function showLoadError(error){$('deckList').innerHTML=`<div class="card hero"><strong>App could not load.</strong><p>${escapeHtml(error.message)}</p></div>`;}
+function escapeHtml(value){return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+
+/* EVENTS --------------------------------------------------------------- */
+$('continueReadButton').addEventListener('click',()=>continueLastDeck('read'));
+$('continueTestButton').addEventListener('click',()=>continueLastDeck('test'));
+$('startSmartButton').addEventListener('click',()=>startLearn('ordered'));
+$('startOrderedButton').addEventListener('click',()=>startLearn('random'));
+$('setupReadButton').addEventListener('click',()=>startLearn('ordered'));
+$('switchToTestButton').addEventListener('click',()=>startOrResumeTest());
+$('previousReadButton').addEventListener('click',()=>moveReadCard(-1));$('nextReadButton').addEventListener('click',()=>moveReadCard(1));
+$('readSearchInput').addEventListener('input',e=>filterReadCards(e.target.value));$('clearReadSearchButton').addEventListener('click',()=>{$('readSearchInput').value='';filterReadCards('');});$('toggleReadAnswerButton').addEventListener('click',toggleReadAnswer);
+$('revealButton').addEventListener('click',reveal);$('rightButton').addEventListener('click',()=>rateWeak(true));$('wrongButton').addEventListener('click',()=>rateWeak(false));$('resetButton').addEventListener('click',resetProgress);
+$('progressContinueButton').addEventListener('click',()=>startOrResumeTest());$('progressWeakButton').addEventListener('click',()=>startWeakReview());
+$('resultsSmartButton').addEventListener('click',()=>startOrResumeTest());$('resultsHomeButton').addEventListener('click',goHome);$('restartOrderedButton').addEventListener('click',restartTest);$('reviewMistakesButton').addEventListener('click',()=>startWeakReview());
+$('homeButton').addEventListener('click',goHome);$('backButton').addEventListener('click',goBack);
+for(const id of ['readCardImage','cardImage'])$(id).addEventListener('click',e=>openImageZoom(e.currentTarget));
+$('closeZoomButton').addEventListener('click',closeImageZoom);$('zoomInButton').addEventListener('click',()=>changeZoom(.5));$('zoomOutButton').addEventListener('click',()=>changeZoom(-.5));$('resetZoomButton').addEventListener('click',resetImageZoom);
+$('imageZoom').addEventListener('click',e=>{if(e.target===$('imageZoom'))closeImageZoom();});$('zoomStage').addEventListener('wheel',e=>{e.preventDefault();changeZoom(e.deltaY<0?.35:-.35,e.clientX,e.clientY);},{passive:false});$('zoomStage').addEventListener('dblclick',handleZoomDoubleAction);$('zoomStage').addEventListener('pointerdown',startZoomPointer);$('zoomStage').addEventListener('pointermove',moveZoomPointer);$('zoomStage').addEventListener('pointerup',e=>{handleZoomTap(e);endZoomPointer(e);});$('zoomStage').addEventListener('pointercancel',endZoomPointer);window.addEventListener('resize',updateZoomTransform);
+document.addEventListener('keydown',e=>{if(e.code==='Escape'&&!$('imageZoom').classList.contains('hidden')){closeImageZoom();return;}if(state.mode==='read'){if(e.code==='ArrowLeft')moveReadCard(-1);if(e.code==='ArrowRight')moveReadCard(1);}if(state.testType==='weak'){if(e.code==='Space'&&$('answerPanel').classList.contains('hidden')){e.preventDefault();reveal();}if(e.code==='ArrowLeft'&&!$('answerPanel').classList.contains('hidden'))rateWeak(false);if(e.code==='ArrowRight'&&!$('answerPanel').classList.contains('hidden'))rateWeak(true);}});
 
 loadDeckIndex().catch(showLoadError);
-
-if (
-  'serviceWorker' in navigator &&
-  location.protocol.startsWith('http')
-) {
-  navigator.serviceWorker
-    .register('service-worker.js')
-    .catch(() => {});
-}
+if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('service-worker.js').catch(()=>{});

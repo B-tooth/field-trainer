@@ -57,7 +57,7 @@
       <div class="view-heading">
         <div>
           <p id="readDeckName" class="eyebrow"></p>
-          <h2>Read</h2>
+          <h2 id="readModeHeading">Learn</h2>
         </div>
 
         <button id="switchToTestButton" class="secondary">Test deck</button>
@@ -65,13 +65,9 @@
 
       <div class="read-tools card">
         <label class="search-field" for="readSearchInput">
-          <span>Find a species</span>
+          <span>Find a card</span>
           <input id="readSearchInput" type="search" placeholder="Search this deck…" autocomplete="off">
         </label>
-
-        <button id="toggleReadAnswerButton" class="secondary" aria-pressed="false">
-          Hide answer
-        </button>
       </div>
 
       <p id="readSearchSummary" class="search-summary hidden" aria-live="polite"></p>
@@ -84,7 +80,7 @@
       </div>
 
       <div id="readNoResults" class="empty-state card hidden">
-        <h3>No matching species</h3>
+        <h3>No matching cards</h3>
         <p>Try a different spelling or clear the search.</p>
         <button id="clearReadSearchButton" class="secondary">Clear search</button>
       </div>
@@ -98,6 +94,10 @@
         </div>
       </article>
 
+      <div id="learnRevealControls" class="controls">
+        <button id="toggleReadAnswerButton" class="primary wide">Show answer</button>
+      </div>
+
       <div class="pager">
         <button id="previousReadButton" class="secondary">← Previous</button>
         <button id="nextReadButton" class="primary">Next →</button>
@@ -108,7 +108,7 @@
       <div class="view-heading">
         <div>
           <p id="testSetupDeckName" class="eyebrow"></p>
-          <h2>Choose a test</h2>
+          <h2 id="testSetupTitle">Choose how to learn</h2>
         </div>
 
         <button id="setupReadButton" class="secondary">Read deck</button>
@@ -117,31 +117,25 @@
       <div class="test-options">
         <article class="test-option card">
           <div>
-            <p class="eyebrow">RECOMMENDED</p>
-            <h2>Smart Random</h2>
-            <p>
-              Cards are selected randomly. Cards you previously answered
-              incorrectly appear more often.
-            </p>
+            <p id="smartOptionEyebrow" class="eyebrow">STRUCTURED</p>
+            <h2 id="smartOptionTitle">In Order</h2>
+            <p id="smartOptionText">Work through every card in its original slide order.</p>
           </div>
 
           <button id="startSmartButton" class="primary">
-            Start Smart Random
+            Learn In Order
           </button>
         </article>
 
         <article class="test-option card">
           <div>
-            <p class="eyebrow">STRUCTURED PRACTICE</p>
-            <h2>In Order</h2>
-            <p>
-              Work through every slide once, beginning with slide 1 and
-              finishing with the final slide.
-            </p>
+            <p id="orderedOptionEyebrow" class="eyebrow">MIX IT UP</p>
+            <h2 id="orderedOptionTitle">Random</h2>
+            <p id="orderedOptionText">Work through every card once in a shuffled order.</p>
           </div>
 
           <button id="startOrderedButton" class="primary">
-            Start In Order
+            Learn Random
           </button>
         </article>
       </div>
@@ -174,6 +168,8 @@
         </div>
       </article>
 
+      <div id="multipleChoiceControls" class="multiple-choice-controls hidden" aria-label="Answer choices"></div>
+
       <div id="revealControls" class="controls">
         <button id="revealButton" class="primary wide">Show answer</button>
       </div>
@@ -187,7 +183,7 @@
         Space = reveal · ← = wrong · → = right
       </p>
 
-      <div class="stats card">
+      <div id="testStats" class="stats card">
         <div>
           <span>Right</span>
           <strong id="rightCount">0</strong>
@@ -245,7 +241,7 @@
           <span>Needs practice</span>
           <strong id="progressNeedsPractice">0</strong>
         </div>
-        <div class="progress-metric card progress-metric-wide">
+        <div id="progressForgottenMetric" class="progress-metric card progress-metric-wide">
           <span>Forgotten</span>
           <strong id="progressForgotten">0</strong>
         </div>
@@ -261,7 +257,7 @@
           <button id="progressWeakButton" class="secondary">Review weak cards</button>
           <button id="progressForgottenButton" class="secondary">Review forgotten cards</button>
         </div>
-        <p class="progress-action-note">Targeted reviews include up to 20 cards per session.</p>
+        <p id="progressActionNote" class="progress-action-note">Only completed Tests affect Field Readiness.</p>
       </section>
     </section>
 
@@ -306,7 +302,7 @@
           </button>
 
           <button id="resultsSmartButton" class="secondary">
-            Start Smart Random
+            Learn In Order
           </button>
 
           <button id="resultsHomeButton" class="secondary">
@@ -315,7 +311,7 @@
         </div>
       </div>
     </section>
-    <footer class="app-footer">Field Trainer <span id="appVersion">v0.7.3r</span></footer>
+    <footer class="app-footer">Field Trainer <span id="appVersion">v0.7.4.1</span></footer>
   </main>
 
   <div id="imageZoom" class="image-zoom hidden" role="dialog" aria-modal="true" aria-label="Image viewer">

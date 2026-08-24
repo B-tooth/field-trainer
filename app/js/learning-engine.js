@@ -1,360 +1,225 @@
 'use strict';
 
-/**
- * Field Trainer learning engine.
- * Owns the versioned, persistent learning history used by every study area.
- */
+/** Field Trainer v0.7.4 learning engine. */
 const FieldTrainerLearning = (() => {
   const STORAGE_KEY = 'field-trainer:learning-data';
-  const SCHEMA_VERSION = 2;
-  const RECENT_RESULT_LIMIT = 10;
-  const FIELD_READINESS_VERSION = 1;
+  const SCHEMA_VERSION = 3;
+  const TEST_HISTORY_LIMIT = 50;
+
+  const nowIso = () => new Date().toISOString();
+  const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
 
   function emptyDatabase() {
-    return {
-      version: SCHEMA_VERSION,
-      updatedAt: null,
-      studyAreas: {}
-    };
-  }
-
-  function emptyStudyArea(deckId, deckName = deckId) {
-    return {
-      id: deckId,
-      name: deckName,
-      right: 0,
-      wrong: 0,
-      sessions: 0,
-      cards: {},
-      migratedFromLegacy: false,
-      updatedAt: null
-    };
+    return { version: SCHEMA_VERSION, updatedAt: null, studyAreas: {} };
   }
 
   function emptyCardRecord(cardId) {
     return {
       id: cardId,
-      seen: 0,
-      correct: 0,
-      wrong: 0,
-      currentStreak: 0,
-      bestStreak: 0,
-      lastReviewed: null,
-      recentResults: [],
-      fieldReadiness: 0,
-      learningScore: 0,
-      readinessVersion: FIELD_READINESS_VERSION
+      testCorrect: 0,
+      testWrong: 0,
+      lastTestCorrect: null,
+      lastTestedAt: null
     };
   }
 
-  function normaliseCardRecord(cardId, record = {}) {
-    const correct = Number(record.correct ?? record.right ?? 0) || 0;
-    const wrong = Number(record.wrong ?? 0) || 0;
-    const seen = Number(record.seen ?? (correct + wrong)) || 0;
-
+  function emptyStudyArea(deck) {
     return {
-      ...emptyCardRecord(cardId),
-      ...record,
-      id: cardId,
-      seen,
-      correct,
-      wrong,
-      currentStreak: Number(record.currentStreak ?? 0) || 0,
-      bestStreak: Number(record.bestStreak ?? 0) || 0,
-      recentResults: Array.isArray(record.recentResults)
-        ? record.recentResults.slice(-RECENT_RESULT_LIMIT).map((value) => value ? 1 : 0)
-        : [],
-      fieldReadiness: Number(record.fieldReadiness ?? record.learningScore ?? 0) || 0,
-      learningScore: Number(record.fieldReadiness ?? record.learningScore ?? 0) || 0,
-      readinessVersion: Number(record.readinessVersion ?? 0) || 0
+      id: deck.id,
+      name: deck.name,
+      sessions: 0,
+      completedTests: 0,
+      testHistory: [],
+      lastCompletedTestAt: null,
+      legacyReadiness: null,
+      cards: {},
+      updatedAt: null
     };
-  }
-
-  function normaliseDatabase(value) {
-    if (!value || typeof value !== 'object') {
-      return emptyDatabase();
-    }
-
-    const database = {
-      ...emptyDatabase(),
-      ...value,
-      version: SCHEMA_VERSION,
-      studyAreas: {}
-    };
-
-    for (const [deckId, areaValue] of Object.entries(value.studyAreas || {})) {
-      const area = {
-        ...emptyStudyArea(deckId, areaValue?.name || deckId),
-        ...areaValue,
-        id: deckId,
-        cards: {}
-      };
-
-      for (const [cardId, cardValue] of Object.entries(areaValue?.cards || {})) {
-        area.cards[cardId] = normaliseCardRecord(cardId, cardValue);
-      }
-
-      database.studyAreas[deckId] = area;
-    }
-
-    return database;
   }
 
   function loadDatabase() {
     try {
-      return normaliseDatabase(JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'));
-    } catch (error) {
-      console.warn('Field Trainer could not read learning data. A fresh record will be used.', error);
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (!raw || typeof raw !== 'object') return emptyDatabase();
+      return { ...emptyDatabase(), ...raw, version: SCHEMA_VERSION, studyAreas: raw.studyAreas || {} };
+    } catch {
       return emptyDatabase();
     }
   }
 
   function saveDatabase(database) {
     database.version = SCHEMA_VERSION;
-    database.updatedAt = new Date().toISOString();
+    database.updatedAt = nowIso();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(database));
   }
 
-  function legacyProgressKey(deckId) {
-    return `species-flashcards:${deckId}`;
-  }
-
-  function readLegacyProgress(deckId) {
-    try {
-      return JSON.parse(localStorage.getItem(legacyProgressKey(deckId)) || 'null');
-    } catch {
-      return null;
+  function ensureArea(database, deck) {
+    const existing = database.studyAreas[deck.id];
+    if (!existing) {
+      database.studyAreas[deck.id] = emptyStudyArea(deck);
     }
-  }
-
-  function ensureStudyArea(database, deck) {
-    database.studyAreas[deck.id] ||= emptyStudyArea(deck.id, deck.name);
     const area = database.studyAreas[deck.id];
-    area.name = deck.name || area.name;
+    area.id = deck.id;
+    area.name = deck.name;
+    area.sessions = Number(area.sessions) || 0;
+    area.completedTests = Number(area.completedTests) || 0;
+    area.testHistory = Array.isArray(area.testHistory) ? area.testHistory : [];
+    area.cards = area.cards || {};
 
-    for (const card of deck.cards || []) {
-      area.cards[card.id] = normaliseCardRecord(card.id, area.cards[card.id]);
+    // Preserve the old v0.7.x readiness as a display-only baseline until the
+    // learner completes their first v0.7.4 multiple-choice Test.
+    if (!area.testHistory.length && area.legacyReadiness == null) {
+      const oldScores = deck.cards
+        .map((card) => Number(area.cards?.[card.id]?.fieldReadiness))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      if (oldScores.length) {
+        area.legacyReadiness = Math.round(oldScores.reduce((a, b) => a + b, 0) / oldScores.length);
+      }
     }
 
+    for (const card of deck.cards) {
+      const old = area.cards[card.id] || {};
+      area.cards[card.id] = {
+        ...old,
+        ...emptyCardRecord(card.id),
+        testCorrect: Number(old.testCorrect) || 0,
+        testWrong: Number(old.testWrong) || 0,
+        lastTestCorrect: typeof old.lastTestCorrect === 'boolean' ? old.lastTestCorrect : null,
+        lastTestedAt: old.lastTestedAt || null
+      };
+    }
     return area;
   }
 
-  function migrateLegacyProgress(database, deck, area) {
-    if (area.migratedFromLegacy) {
-      return false;
-    }
+  function weightedTestScore(history) {
+    const scores = history.slice(-3).map((entry) => Number(entry.percentage) || 0);
+    if (!scores.length) return null;
+    if (scores.length >= 3 && scores.slice(-3).every((score) => score === 100)) return 100;
 
-    const legacy = readLegacyProgress(deck.id);
-
-    if (legacy && typeof legacy === 'object') {
-      area.right = Number(legacy.right ?? 0) || 0;
-      area.wrong = Number(legacy.wrong ?? 0) || 0;
-
-      for (const card of deck.cards || []) {
-        const oldCard = legacy.cards?.[card.id];
-        if (!oldCard) continue;
-
-        const correct = Number(oldCard.right ?? 0) || 0;
-        const wrong = Number(oldCard.wrong ?? 0) || 0;
-        const current = area.cards[card.id] || emptyCardRecord(card.id);
-
-        area.cards[card.id] = normaliseCardRecord(card.id, {
-          ...current,
-          seen: Math.max(current.seen, correct + wrong),
-          correct: Math.max(current.correct, correct),
-          wrong: Math.max(current.wrong, wrong)
-        });
-      }
-    }
-
-    area.migratedFromLegacy = true;
-    return true;
-  }
-
-  function prepareDeck(deck) {
-    const database = loadDatabase();
-    const area = ensureStudyArea(database, deck);
-    const migrated = migrateLegacyProgress(database, deck, area);
-
-    if (migrated || !database.updatedAt) {
-      saveDatabase(database);
-    }
-
-    return getDeckProgress(deck);
-  }
-
-  function getDeckProgress(deck) {
-    const database = loadDatabase();
-    const area = ensureStudyArea(database, deck);
-    let changed = migrateLegacyProgress(database, deck, area);
-    const now = new Date();
-
-    for (const record of Object.values(area.cards)) {
-      const previousScore = Number(record.fieldReadiness ?? record.learningScore ?? 0) || 0;
-      const previousVersion = Number(record.readinessVersion ?? 0) || 0;
-      refreshCardReadiness(record, now);
-      if (record.fieldReadiness !== previousScore || previousVersion !== FIELD_READINESS_VERSION) {
-        changed = true;
-      }
-    }
-
-    if (changed) saveDatabase(database);
-
-    return {
-      right: area.right,
-      wrong: area.wrong,
-      sessions: Number(area.sessions) || 0,
-      cards: Object.fromEntries(
-        Object.entries(area.cards).map(([cardId, card]) => [
-          cardId,
-          {
-            right: card.correct,
-            wrong: card.wrong,
-            seen: card.seen,
-            currentStreak: card.currentStreak,
-            bestStreak: card.bestStreak,
-            lastReviewed: card.lastReviewed,
-            recentResults: [...card.recentResults],
-            fieldReadiness: card.fieldReadiness,
-            learningScore: card.fieldReadiness,
-            readinessBand: getReadinessBand(card.fieldReadiness)
-          }
-        ])
-      )
+    const weightsByCount = {
+      1: [1],
+      2: [0.375, 0.625], // older, latest = normalised 30/50
+      3: [0.2, 0.3, 0.5]
     };
+    const weights = weightsByCount[scores.length];
+    return Math.round(scores.reduce((sum, score, index) => sum + score * weights[index], 0));
   }
 
-  /**
-   * Estimates how ready the learner is to recognise this card today.
-   *
-   * The score deliberately rewards repeated evidence, not a single lucky answer.
-   * It combines lifetime accuracy, recent performance, current streak, number of
-   * reviews and time since the card was last seen. Unseen cards always score 0.
-   */
-  function calculateFieldReadiness(record, now = new Date()) {
-    const seen = Math.max(0, Number(record.seen) || 0);
-    if (!seen) return 0;
+  function applyDecay(baseScore, lastCompletedTestAt, now = new Date()) {
+    if (baseScore == null) return null;
+    const timestamp = Date.parse(lastCompletedTestAt || '');
+    if (!Number.isFinite(timestamp)) return clamp(Math.round(baseScore));
+    const days = Math.max(0, (now.getTime() - timestamp) / 86400000);
+    const periods = Math.floor(days / 30);
+    return clamp(Math.round(baseScore) - periods * 10);
+  }
 
-    const correct = Math.min(seen, Math.max(0, Number(record.correct) || 0));
-
-    // Bayesian accuracy prevents one early answer from creating an extreme score.
-    // The prior is equivalent to two correct and two wrong answers (50%).
-    const accuracy = (correct + 2) / (seen + 4);
-
-    const recent = Array.isArray(record.recentResults)
-      ? record.recentResults.slice(-RECENT_RESULT_LIMIT)
-      : [];
-
-    // Give the newest answers slightly more influence than older answers.
-    let recentPerformance = accuracy;
-    if (recent.length) {
-      let weightedTotal = 0;
-      let weightTotal = 0;
-      recent.forEach((result, index) => {
-        const weight = index + 1;
-        weightedTotal += (result ? 1 : 0) * weight;
-        weightTotal += weight;
-      });
-      recentPerformance = weightedTotal / weightTotal;
-    }
-
-    // A five-answer streak receives the full consistency contribution.
-    const streakStrength = Math.min(1, (Number(record.currentStreak) || 0) / 5);
-
-    // Ten reviews provide strong evidence; earlier results remain deliberately cautious.
-    const evidence = 1 - Math.exp(-seen / 4.5);
-
-    const demonstratedSkill =
-      (accuracy * 0.55) +
-      (recentPerformance * 0.30) +
-      (streakStrength * 0.15);
-
-    // No time penalty for the first week. After that, confidence declines gradually,
-    // but historical learning is never erased completely.
-    let retention = 1;
-    const lastReviewed = Date.parse(record.lastReviewed || '');
-    if (Number.isFinite(lastReviewed)) {
-      const daysSinceReview = Math.max(0, (now.getTime() - lastReviewed) / 86400000);
-      const daysBeyondGrace = Math.max(0, daysSinceReview - 7);
-      retention = 0.6 + (0.4 * Math.pow(0.5, daysBeyondGrace / 60));
-    }
-
-    return Math.max(
-      0,
-      Math.min(100, Math.round(demonstratedSkill * evidence * retention * 100))
-    );
+  function getFieldReadiness(area, now = new Date()) {
+    const rolling = weightedTestScore(area.testHistory || []);
+    if (rolling != null) return applyDecay(rolling, area.lastCompletedTestAt, now);
+    return area.legacyReadiness == null ? null : clamp(Number(area.legacyReadiness) || 0);
   }
 
   function getReadinessBand(score) {
+    if (score == null) return 'New';
     const value = Number(score) || 0;
-    if (value <= 0) return 'New';
     if (value < 40) return 'Learning';
     if (value < 65) return 'Familiar';
     if (value < 85) return 'Confident';
     return 'Field Ready';
   }
 
-  function refreshCardReadiness(record, now = new Date()) {
-    const fieldReadiness = calculateFieldReadiness(record, now);
-    record.fieldReadiness = fieldReadiness;
-    // Keep the former property as a compatibility alias until all UI code is migrated.
-    record.learningScore = fieldReadiness;
-    record.readinessVersion = FIELD_READINESS_VERSION;
-    return record;
+  function prepareDeck(deck) {
+    const database = loadDatabase();
+    ensureArea(database, deck);
+    saveDatabase(database);
+    return getDeckProgress(deck);
   }
 
-  function recordAnswer(deck, cardId, isCorrect) {
+  function getDeckProgress(deck) {
     const database = loadDatabase();
-    const area = ensureStudyArea(database, deck);
-    migrateLegacyProgress(database, deck, area);
-
-    const record = normaliseCardRecord(cardId, area.cards[cardId]);
-    const timestamp = new Date().toISOString();
-
-    record.seen += 1;
-    record.lastReviewed = timestamp;
-    record.recentResults.push(isCorrect ? 1 : 0);
-    record.recentResults = record.recentResults.slice(-RECENT_RESULT_LIMIT);
-
-    if (isCorrect) {
-      record.correct += 1;
-      record.currentStreak += 1;
-      record.bestStreak = Math.max(record.bestStreak, record.currentStreak);
-      area.right += 1;
-    } else {
-      record.wrong += 1;
-      record.currentStreak = 0;
-      area.wrong += 1;
-    }
-
-    refreshCardReadiness(record, new Date(timestamp));
-    area.cards[cardId] = record;
-    area.updatedAt = timestamp;
+    const area = ensureArea(database, deck);
+    const fieldReadiness = getFieldReadiness(area);
     saveDatabase(database);
 
-    return { ...record, recentResults: [...record.recentResults] };
-  }
+    const cards = Object.fromEntries(deck.cards.map((card) => {
+      const record = area.cards[card.id];
+      return [card.id, {
+        testCorrect: record.testCorrect,
+        testWrong: record.testWrong,
+        lastTestCorrect: record.lastTestCorrect,
+        lastTestedAt: record.lastTestedAt
+      }];
+    }));
 
+    const totalTestAnswers = Object.values(cards)
+      .reduce((sum, record) => sum + record.testCorrect + record.testWrong, 0);
+
+    return {
+      sessions: area.sessions,
+      completedTests: area.completedTests,
+      testHistory: [...area.testHistory],
+      lastCompletedTestAt: area.lastCompletedTestAt,
+      fieldReadiness,
+      readinessBand: getReadinessBand(fieldReadiness),
+      totalTestAnswers,
+      cards
+    };
+  }
 
   function recordSessionStart(deck) {
     const database = loadDatabase();
-    const area = ensureStudyArea(database, deck);
-    migrateLegacyProgress(database, deck, area);
-    area.sessions = (Number(area.sessions) || 0) + 1;
-    area.updatedAt = new Date().toISOString();
+    const area = ensureArea(database, deck);
+    area.sessions += 1;
+    area.updatedAt = nowIso();
     saveDatabase(database);
     return area.sessions;
   }
+
+  function recordCompletedTest(deck, results) {
+    const database = loadDatabase();
+    const area = ensureArea(database, deck);
+    const completedAt = nowIso();
+    const total = results.length;
+    const correct = results.filter((result) => result.correct).length;
+    const percentage = total ? Math.round((correct / total) * 100) : 0;
+
+    for (const result of results) {
+      const record = area.cards[result.cardId] || emptyCardRecord(result.cardId);
+      if (result.correct) record.testCorrect = (Number(record.testCorrect) || 0) + 1;
+      else record.testWrong = (Number(record.testWrong) || 0) + 1;
+      record.lastTestCorrect = Boolean(result.correct);
+      record.lastTestedAt = completedAt;
+      area.cards[result.cardId] = record;
+    }
+
+    area.testHistory.push({ completedAt, percentage, correct, total });
+    area.testHistory = area.testHistory.slice(-TEST_HISTORY_LIMIT);
+    area.completedTests += 1;
+    area.lastCompletedTestAt = completedAt;
+    area.legacyReadiness = null;
+    area.updatedAt = completedAt;
+    saveDatabase(database);
+
+    return { percentage, fieldReadiness: getFieldReadiness(area), completedAt };
+  }
+
+  function getWeakCardIds(deck) {
+    const progress = getDeckProgress(deck);
+    return deck.cards
+      .filter((card) => progress.cards[card.id]?.lastTestCorrect === false)
+      .map((card) => card.id);
+  }
+
   function resetDeck(deckId) {
     const database = loadDatabase();
     delete database.studyAreas[deckId];
     saveDatabase(database);
-    localStorage.removeItem(legacyProgressKey(deckId));
+    localStorage.removeItem(`field-trainer:test-session:${deckId}`);
   }
 
   function inspectDeck(deckId) {
-    const database = loadDatabase();
-    return database.studyAreas[deckId] || null;
+    return loadDatabase().studyAreas[deckId] || null;
   }
 
   return Object.freeze({
@@ -362,9 +227,11 @@ const FieldTrainerLearning = (() => {
     SCHEMA_VERSION,
     prepareDeck,
     getDeckProgress,
-    recordAnswer,
     recordSessionStart,
-    calculateFieldReadiness,
+    recordCompletedTest,
+    getWeakCardIds,
+    weightedTestScore,
+    applyDecay,
     getReadinessBand,
     resetDeck,
     inspectDeck

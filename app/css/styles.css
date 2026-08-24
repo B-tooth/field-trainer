@@ -610,3 +610,13 @@ body.zoom-open {
   .progress-metric-wide { grid-column:auto; }
   .progress-action-buttons { grid-template-columns:repeat(3,1fr); }
 }
+
+/* v0.7.4 study modes */
+.deck-actions-study { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.deck-actions-study button { min-height:46px; padding:11px 12px; border-radius:13px; font-weight:800; }
+.multiple-choice-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.choice-button { min-height:58px; text-align:left; font-weight:800; line-height:1.3; }
+@media (max-width:600px) {
+  .deck-actions-study, .multiple-choice-controls { grid-template-columns:1fr; }
+  .choice-button { min-height:54px; }
+}
